@@ -29,18 +29,43 @@ const COST_LABELS: Record<string, string> = {
 const pretty = (s: string) =>
   s.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 
-/** The source register list with search and horizon filter — shared by the
- * reader (/) and admin (/admin/sources) endpoints. */
+type SortKey = "name" | "cluster" | "cost" | "enabled";
+type Sort = { key: SortKey; dir: 1 | -1 } | null;
+
+const sortValue = (s: SourceRow, key: SortKey): string | number => {
+  if (key === "enabled") return s.enabled ? 1 : 0;
+  if (key === "cost") return COST_LABELS[s.cost] ?? s.cost;
+  return s[key].toLowerCase();
+};
+
+export const filterSegment = (
+  active: boolean
+) =>
+  `px-3 py-1.5 ${active ? "bg-[#1c1a17] font-medium text-white" : "hover:bg-neutral-100"}`;
+
+/** The source register list with search, horizon/cost/enabled filters and
+ * sortable columns — shared by the reader (/) and admin (/admin/sources)
+ * endpoints. */
 export default function SourceBrowser() {
   const router = useRouter();
   const [data, setData] = useState<SourcesResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [query, setQuery] = useState("");
   const [horizon, setHorizon] = useState<string>("all");
+  const [cost, setCost] = useState<string>("all");
+  const [enabled, setEnabled] = useState<string>("all");
+  const [sort, setSort] = useState<Sort>(null);
 
   useEffect(() => {
     fetchJson<SourcesResponse>("/api/sources").then(setData).catch(setError);
   }, []);
+
+  const costOptions = useMemo(() => {
+    if (!data) return [];
+    const known = Object.keys(COST_LABELS);
+    const seen = [...new Set(data.sources.map((s) => s.cost))];
+    return [...known.filter((c) => seen.includes(c)), ...seen.filter((c) => !known.includes(c))];
+  }, [data]);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -48,12 +73,44 @@ export default function SourceBrowser() {
     return data.sources.filter(
       (s) =>
         (horizon === "all" || s.horizon === horizon) &&
+        (cost === "all" || s.cost === cost) &&
+        (enabled === "all" || s.enabled === (enabled === "on")) &&
         (!q ||
           s.name.toLowerCase().includes(q) ||
           s.source_id.toLowerCase().includes(q) ||
           s.cluster.toLowerCase().includes(q))
     );
-  }, [data, query, horizon]);
+  }, [data, query, horizon, cost, enabled]);
+
+  const sortRows = (rows: SourceRow[]) => {
+    if (!sort) return rows;
+    const { key, dir } = sort;
+    return [...rows].sort((a, b) => {
+      const va = sortValue(a, key);
+      const vb = sortValue(b, key);
+      return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
+    });
+  };
+
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev?.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: 1 }
+    );
+
+  const SortHeader = ({ label, k }: { label: string; k: SortKey }) => (
+    <th className="px-4 py-2.5 font-medium">
+      <button
+        onClick={() => toggleSort(k)}
+        className="flex items-center gap-1 uppercase tracking-wider hover:text-neutral-800"
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        <span className={sort?.key === k ? "" : "text-neutral-300"}>
+          {sort?.key === k && sort.dir === -1 ? "▼" : "▲"}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
     <div>
@@ -73,13 +130,35 @@ export default function SourceBrowser() {
                 <button
                   key={h}
                   onClick={() => setHorizon(h)}
-                  className={`px-3 py-1.5 ${
-                    horizon === h
-                      ? "bg-[#1c1a17] font-medium text-white"
-                      : "hover:bg-neutral-100"
-                  }`}
+                  className={filterSegment(horizon === h)}
                 >
                   {h === "all" ? "All horizons" : h}
+                </button>
+              ))}
+            </div>
+            <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
+              {["all", ...costOptions].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCost(c)}
+                  className={filterSegment(cost === c)}
+                >
+                  {c === "all" ? "All costs" : COST_LABELS[c] ?? pretty(c)}
+                </button>
+              ))}
+            </div>
+            <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
+              {[
+                ["all", "All"],
+                ["on", "Enabled"],
+                ["off", "Disabled"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setEnabled(value)}
+                  className={filterSegment(enabled === value)}
+                >
+                  {label}
                 </button>
               ))}
             </div>
@@ -89,7 +168,7 @@ export default function SourceBrowser() {
           </div>
 
           {(horizon === "all" ? ["H1", "H2", "H3"] : [horizon]).map((h) => {
-            const rows = filtered.filter((s) => s.horizon === h);
+            const rows = sortRows(filtered.filter((s) => s.horizon === h));
             if (rows.length === 0) return null;
             const meta = data.horizons[h];
             return (
@@ -104,11 +183,11 @@ export default function SourceBrowser() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                        <th className="px-4 py-2.5 font-medium">Source</th>
+                        <SortHeader label="Source" k="name" />
                         <th className="px-4 py-2.5 font-medium">Horizon</th>
-                        <th className="px-4 py-2.5 font-medium">Cluster</th>
-                        <th className="px-4 py-2.5 font-medium">Cost</th>
-                        <th className="px-4 py-2.5 font-medium">Enabled</th>
+                        <SortHeader label="Cluster" k="cluster" />
+                        <SortHeader label="Cost" k="cost" />
+                        <SortHeader label="Enabled" k="enabled" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">

@@ -1,0 +1,15 @@
+# ── tech-lens · portal image ──────────────────────────────────────────
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Dependencies first, so code edits don't re-run npm ci.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+EXPOSE 3100
+CMD ["npm", "run", "start"]

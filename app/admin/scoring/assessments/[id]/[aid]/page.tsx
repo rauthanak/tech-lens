@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
+import BackLink from "@/components/BackLink";
+import EvidenceLine from "@/components/EvidenceLine";
+import FabricLabel from "@/components/FabricLabel";
 import PageHeader from "@/components/PageHeader";
+import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
 import { fetchJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import { formatDay } from "@/lib/format";
+import { useHere, withFrom } from "@/lib/here";
+import { formatScore, noPriorityReason } from "@/lib/scoring";
+import { useTechLabel } from "@/lib/tech-labels";
+import { PRIORITY, scoreShade } from "@/lib/theme";
 
 type MeasureResult = {
   code: string;
@@ -18,19 +26,12 @@ type MeasureResult = {
   missing: string | null;
 };
 
-type WatchMetric = {
-  metric: string;
-  current_value?: string;
-  inflection_threshold?: string;
-  direction?: string;
-  implication?: string;
-};
-
 type Assessment = {
   _id: string;
   technology: string;
   tech_id: string;
   fabric: string;
+  fabric_id: string;
   doc_count: number;
   tora: Record<string, { score: number | null; scored: number; of: number; partial: boolean }>;
   placement?: {
@@ -44,16 +45,8 @@ type Assessment = {
   watch_metrics?: WatchMetric[];
   tora_basis: string;
   created_at: string;
+  evidence_runs?: string[];
   measures: Record<string, MeasureResult>;
-};
-
-const PRIORITY_STYLE: Record<string, { bg: string; ink: string }> = {
-  P1: { bg: "#8a4b2d", ink: "#ffffff" },
-  P2: { bg: "#a97253", ink: "#ffffff" },
-  P3: { bg: "#c49579", ink: "#171513" },
-  P4: { bg: "#dcb9a2", ink: "#171513" },
-  P5: { bg: "#eed8c8", ink: "#171513" },
-  P6: { bg: "#f8efe7", ink: "#171513" },
 };
 
 type Doc = {
@@ -73,15 +66,22 @@ const AXES: { key: string; label: string }[] = [
   { key: "adoption_readiness", label: "Adoption Readiness" },
 ];
 
-function scoreShade(score: number | null): string {
-  if (score == null) return "bg-neutral-100 text-neutral-400";
-  if (score >= 7) return "bg-[#8a4b2d] text-white";
-  if (score >= 4) return "bg-[#dcb9a2] text-[#171513]";
-  return "bg-[#f8efe7] text-[#171513]";
+/** How solid a headline score is, in words. */
+function scoredLine(ax: { score: number | null; scored: number; of: number }): string {
+  if (ax.score == null) return `Not enough evidence: 0 of ${ax.of} measures scored`;
+  return ax.scored < ax.of ? `Partial: ${ax.scored} of ${ax.of} measures scored` : `All ${ax.of} measures scored`;
 }
 
-export default function AssessmentPage() {
+/** One of the two things the priority is worked out from, in words. */
+function composite(label: string, c: { score: number | null; band: string | null; scored: number; of: number }): string {
+  return c.score == null ? `${label}: not enough evidence (0 of ${c.of} inputs scored)`
+    : `${label}: ${formatScore(c.score)}${c.band ? `, ${c.band}` : ""} (${c.scored} of ${c.of} inputs scored)`;
+}
+
+function AssessmentDetail() {
   const { id, aid } = useParams<{ id: string; aid: string }>();
+  const here = useHere();
+  const label = useTechLabel();
   const [a, setA] = useState<Assessment | null>(null);
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -111,25 +111,47 @@ export default function AssessmentPage() {
   }, [a, loadDocs]);
 
   return (
-    <div className="max-w-4xl">
-      <PageHeader eyebrow={`Assessment · ${a?.fabric ?? ""}`} title={a?.technology ?? "…"}>
+    <div>
+      <BackLink fallback={`/admin/scoring/assessments/${id}`} />
+      <PageHeader eyebrow="Assessment" title={a ? label(a.technology) : "…"}
+        intro="How this technology scored in one fabric, and why, measure by measure."
+        help={<>
+          <li>The top cards are the three headline scores (0–10), each the weighted average of its measures. Under
+            each: how many of its measures had enough evidence. A measure without enough evidence is left out, never
+            counted as zero; with none, there&apos;s no score.</li>
+          <li>Other measures are scored alongside: they feed the priority and the Point of View instead of the three
+            scores.</li>
+          <li>Placement gives the priority (P1 act now to P6 just watch) and the horizon (H1 near to H3 far), worked
+            out from how soon it arrives and how big the prize is, with no model calls. Without enough evidence on
+            either, it says so.</li>
+          <li>Metrics to watch are suggested by the assessment. Nothing tracks them automatically: the next
+            assessment checks them.</li>
+          <li>The measures: each score with its justification, the strongest case against it and the pages the
+            scorer cited. Below them, the pages linked to the technology today.</li>
+        </>}>
         <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
-          <Link href={`/admin/scoring/assessments/${id}`}
-            className="text-[var(--accent)] underline underline-offset-4">
-            back to run
-          </Link>
+          {a && <FabricLabel id={a.fabric_id} name={a.fabric} />}
           {a && (
-            <Link href={`/admin/scoring/pov/${id}/${a.tech_id}`}
-              className="text-[var(--accent)] underline underline-offset-4">
-              Point of View →
+            <Link href={withFrom(`/admin/technologies/${a.tech_id}`, here)} className="text-link hover:underline">
+              Technology →
             </Link>
           )}
           {a && (
-            <span className="font-mono text-xs text-neutral-500">
-              {a.doc_count} evidence docs · {a.tora_basis} · {formatTime(a.created_at)}
+            <Link href={withFrom(`/admin/scoring/pov/${id}/${a.tech_id}`, here)} className="text-link hover:underline">
+              Point of View →
+            </Link>
+          )}
+          <Link href={`/admin/scoring/assessments/${id}`} className="text-link hover:underline">
+            Assessment run →
+          </Link>
+          {a && (
+            <span className="text-xs text-neutral-500">
+              Assessed {formatDay(a.created_at)} · read {a.doc_count} pages
+              {a.tora_basis?.startsWith("recomputed") && ` · scores recalculated ${formatDay(a.tora_basis.slice(11))}`}
             </span>
           )}
         </p>
+        {a && <EvidenceLine assessments={[a]} />}
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
@@ -140,55 +162,51 @@ export default function AssessmentPage() {
             {AXES.map(({ key, label }) => {
               const ax = a.tora?.[key];
               return (
-                <div key={key} className="border border-neutral-200 bg-white px-5 py-4">
+                <div key={key} className="rounded-card border border-line bg-white px-5 py-4">
                   <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                     {label}
                   </div>
-                  <div className="mt-1 flex items-baseline gap-2">
-                    <span className={`px-2.5 py-1 font-mono text-xl tabular-nums ${scoreShade(ax?.score ?? null)}`}>
-                      {ax?.score ?? "—"}
-                    </span>
-                    {ax?.partial && (
-                      <span className="font-mono text-[11px] text-amber-700">
-                        partial — {ax.scored} of {ax.of} measures scored
+                  <div className="mt-1 flex items-center gap-3">
+                    {ax?.score != null && (
+                      <span className={`px-2.5 py-1 font-mono text-xl tabular-nums ${scoreShade(ax.score)}`}>
+                        {formatScore(ax.score)}
                       </span>
                     )}
+                    {ax && <span className="text-[13px] text-muted">{scoredLine(ax)}</span>}
                   </div>
                 </div>
               );
             })}
-            <div className="border border-dashed border-neutral-300 bg-neutral-50 px-5 py-4">
-              <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500"
-                title="scored alongside TORA, never averaged in — X1/X2 feed the priority grid's potential, X3 the PoV">
-                Outside TORA
+            <div className="rounded-card border border-dashed border-neutral-300 bg-neutral-50 px-5 py-4">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+                Other measures
               </div>
-              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              <ul className="mt-1.5 space-y-1 text-[13px]">
                 {Object.entries(a.measures)
                   .filter(([, m]) => m.code.startsWith("X"))
                   .sort(([, x], [, y]) => x.code.localeCompare(y.code))
                   .map(([mid, m]) => (
-                    <span key={mid} className="flex items-center gap-1.5">
-                      <span className="font-mono text-[11px] text-neutral-500">{m.code}</span>
-                      <span className={`px-1.5 py-0.5 font-mono text-sm tabular-nums ${scoreShade(m.score)}`}>
-                        {m.score ?? "—"}
-                      </span>
-                    </span>
+                    <li key={mid} className="flex items-center justify-between gap-2">
+                      <span className="capitalize text-neutral-700">{mid.replace(/-/g, " ")}</span>
+                      {m.score != null ? (
+                        <span className={`px-1.5 py-0.5 font-mono text-sm tabular-nums ${scoreShade(m.score)}`}>{m.score}</span>
+                      ) : <span className="text-muted">not enough evidence</span>}
+                    </li>
                   ))}
-              </div>
+              </ul>
             </div>
           </div>
 
           {a.placement && (
-            <section className="mt-6 border border-neutral-200 bg-white px-5 py-4">
+            <section className="mt-6 rounded-card border border-line bg-white px-5 py-4">
               <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                Placement — deterministic, recomputes free when cut-points change
+                Placement — worked out from the scores, no model calls
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-x-8 gap-y-3 text-sm">
                 <span className="flex items-center gap-2">
                   <span className="text-neutral-500">Priority</span>
                   {a.placement.priority ? (
-                    <span className="px-2.5 py-1 font-mono text-base"
-                      style={{ background: PRIORITY_STYLE[a.placement.priority]?.bg, color: PRIORITY_STYLE[a.placement.priority]?.ink }}>
+                    <span className={`px-2.5 py-1 font-mono text-base ${PRIORITY[a.placement.priority] ?? ""}`}>
                       {a.placement.priority}
                     </span>
                   ) : <span className="font-mono text-neutral-400">—</span>}
@@ -204,15 +222,10 @@ export default function AssessmentPage() {
                   <span className="text-neutral-500">Horizon</span>
                   <span className="bg-neutral-100 px-2 py-0.5 font-mono">{a.placement.horizon ?? "—"}</span>
                 </span>
-                <span className="font-mono text-xs text-neutral-600">
-                  how soon: {a.placement.timeline.score ?? "—"} ({a.placement.timeline.band ?? "?"}
-                  {a.placement.timeline.partial && `, ${a.placement.timeline.scored}/${a.placement.timeline.of} scored`})
-                </span>
-                <span className="font-mono text-xs text-neutral-600">
-                  how big: {a.placement.potential.score ?? "—"} ({a.placement.potential.band ?? "?"}
-                  {a.placement.potential.partial && `, ${a.placement.potential.scored}/${a.placement.potential.of} scored`})
-                </span>
+                <span className="text-neutral-600">{composite("How soon", a.placement.timeline)}</span>
+                <span className="text-neutral-600">{composite("How big", a.placement.potential)}</span>
               </div>
+              {noPriorityReason(a.placement) && <p className="mt-2 text-sm text-muted">{noPriorityReason(a.placement)}</p>}
             </section>
           )}
 
@@ -220,47 +233,20 @@ export default function AssessmentPage() {
             <section className="mt-6">
               <h2 className="text-lg font-semibold">Metrics to watch</h2>
               <p className="mt-1 text-sm text-neutral-600">
-                Checkable predictions — a later run can verify each one. Crossing
-                a threshold changes this technology&apos;s story.
+                What would change this technology&apos;s story, suggested by the assessment. Nothing tracks them
+                automatically: the next assessment checks them.
               </p>
-              <div className="mt-3 divide-y divide-neutral-100 border border-neutral-200 bg-white">
-                {a.watch_metrics!.map((m, i) => (
-                  <div key={i} className="px-5 py-3.5">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="min-w-0 text-sm font-medium leading-snug">{m.metric}</span>
-                      {m.direction && (
-                        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-neutral-500">
-                          watching it {m.direction === "rising" ? "rise ↑" : m.direction === "falling" ? "fall ↓" : m.direction}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1.5 grid gap-x-6 gap-y-1 text-sm text-neutral-600 sm:grid-cols-2">
-                      {m.current_value && (
-                        <p><span className="font-mono text-[11px] uppercase text-neutral-500">now </span>{m.current_value}</p>
-                      )}
-                      {m.inflection_threshold && (
-                        <p><span className="font-mono text-[11px] uppercase text-neutral-500">inflection </span>{m.inflection_threshold}</p>
-                      )}
-                    </div>
-                    {m.implication && (
-                      <p className="mt-1 text-sm text-neutral-600">
-                        <span className="font-mono text-[11px] uppercase text-neutral-500">if crossed </span>
-                        {m.implication}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <div className="mt-3"><WatchMetrics metrics={a.watch_metrics!} /></div>
             </section>
           )}
 
           <section className="mt-7">
             <h2 className="text-lg font-semibold">The measures</h2>
-            <div className="mt-3 space-y-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
               {Object.entries(a.measures)
                 .sort(([, x], [, y]) => x.code.localeCompare(y.code))
                 .map(([mid, m]) => (
-                  <div key={mid} className="border border-neutral-200 bg-white px-5 py-4">
+                  <div key={mid} className="rounded-card border border-line bg-white px-5 py-4">
                     <div className="flex items-center gap-3">
                       <span className="font-mono text-xs text-neutral-500">{m.code}</span>
                       <span className={`px-2 py-0.5 font-mono text-sm tabular-nums ${scoreShade(m.score)}`}>
@@ -268,8 +254,8 @@ export default function AssessmentPage() {
                       </span>
                       <span className="font-mono text-xs text-neutral-500">{mid.replace(/-/g, " ")}</span>
                       {m.unscorable && (
-                        <span className="bg-amber-100 px-2 py-0.5 font-mono text-[11px] uppercase text-amber-900">
-                          unscorable
+                        <span className="bg-neutral-100 px-2 py-0.5 font-mono text-[11px] uppercase">
+                          ◐ unscorable
                         </span>
                       )}
                     </div>
@@ -277,7 +263,7 @@ export default function AssessmentPage() {
                       <p className="mt-2.5 text-sm leading-relaxed text-neutral-700">{m.justification}</p>
                     )}
                     {m.unscorable && m.missing && (
-                      <p className="mt-2 text-sm text-amber-800">
+                      <p className="mt-2 text-sm">
                         <span className="font-mono text-[11px] uppercase">what would resolve it: </span>
                         {m.missing}
                       </p>
@@ -296,7 +282,7 @@ export default function AssessmentPage() {
                         <div className="mt-1 flex flex-col gap-0.5">
                           {m.evidence_urls.map((u) => (
                             <a key={u} href={u} target="_blank" rel="noreferrer"
-                              className="break-all font-mono text-xs text-[var(--accent)] hover:underline">
+                              className="break-all font-mono text-xs text-link hover:underline">
                               {u}
                             </a>
                           ))}
@@ -309,15 +295,14 @@ export default function AssessmentPage() {
           </section>
 
           <section className="mt-8">
-            <h2 className="text-lg font-semibold">The evidence dossier</h2>
+            <h2 className="text-lg font-semibold">Pages linked to this technology now</h2>
             <p className="mt-1 text-sm text-neutral-600">
-              Every document behind this assessment — all {total} were in the
-              dossier the scorer read, newest published first (undated ones
-              last, by extraction date). The links on each measure above are the
-              subset the scorer cited.
+              {total} in all, newest published first (undated ones last, by collection date). Pages
+              collected after this assessment weren&apos;t read by it; the links on
+              each measure above are the pages the scorer cited.
             </p>
             {docs && (
-              <div className="mt-3 divide-y divide-neutral-100 border border-neutral-200 bg-white">
+              <div className="mt-3 divide-y divide-neutral-100 rounded-card border border-line bg-white">
                 {docs.map((d) => (
                   <div key={d.id} className="px-5 py-3">
                     <div className="flex items-baseline gap-3">
@@ -332,7 +317,7 @@ export default function AssessmentPage() {
                       </span>
                     </div>
                     <a href={d.end_url} target="_blank" rel="noreferrer"
-                      className="mt-0.5 block truncate font-mono text-xs text-[var(--accent)] hover:underline">
+                      className="mt-0.5 block truncate font-mono text-xs text-link hover:underline">
                       {d.end_url}
                     </a>
                   </div>
@@ -342,7 +327,7 @@ export default function AssessmentPage() {
             {docs && docs.length < total && (
               <button
                 onClick={() => loadDocs(docs.length, a.tech_id)}
-                className="mt-3 border border-neutral-300 bg-white px-4 py-2 text-sm hover:bg-neutral-100"
+                className="mt-3 rounded-full border border-line bg-white px-4 py-2 text-sm hover:bg-neutral-100"
               >
                 Load more ({docs.length} of {total})
               </button>
@@ -351,5 +336,13 @@ export default function AssessmentPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function AssessmentPage() {
+  return (
+    <Suspense fallback={null}>
+      <AssessmentDetail />
+    </Suspense>
   );
 }

@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import BackendError from "@/components/BackendError";
 import { fetchJson } from "@/lib/api";
 
+type Progress = { search: string; remaining?: number; too_broad?: boolean };
+
 type SourceRow = {
   source_id: string;
   name: string;
@@ -13,7 +15,24 @@ type SourceRow = {
   cluster: string;
   cost: string;
   enabled: boolean;
+  access?: "crawl" | "query" | "none";
+  adapter?: string;
+  note?: string;
+  progress?: Progress[];
 };
+
+type AdapterInfo = { name: string; label: string };
+
+const ACCESS_LABELS: Record<string, string> = { crawl: "Website", query: "Data source", none: "Never" };
+const accessOf = (s: SourceRow) => s.access ?? "crawl";
+
+/** "{n} still to collect" / "too broad" for a data source with a backlog. */
+export function backlog(s: SourceRow): string | null {
+  const remaining = (s.progress ?? []).reduce((n, p) => n + (p.remaining ?? 0), 0);
+  const broad = (s.progress ?? []).some((p) => p.too_broad);
+  const parts = [remaining > 0 ? `${remaining} still to collect` : "", broad ? "too broad" : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
 
 type SourcesResponse = {
   horizons: Record<string, { label?: string; meaning?: string }>;
@@ -41,7 +60,7 @@ const sortValue = (s: SourceRow, key: SortKey): string | number => {
 export const filterSegment = (
   active: boolean
 ) =>
-  `px-3 py-1.5 ${active ? "bg-[#1c1a17] font-medium text-white" : "hover:bg-neutral-100"}`;
+  `px-3 py-1.5 ${active ? "bg-navy font-medium text-white" : "hover:bg-neutral-100"}`;
 
 /** The source register list with search, horizon/cost/enabled filters and
  * sortable columns — shared by the reader (/) and admin (/admin/sources)
@@ -54,10 +73,15 @@ export default function SourceBrowser() {
   const [horizon, setHorizon] = useState<string>("all");
   const [cost, setCost] = useState<string>("all");
   const [enabled, setEnabled] = useState<string>("all");
+  const [access, setAccess] = useState<string>("all");
   const [sort, setSort] = useState<Sort>(null);
+  const [adapters, setAdapters] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchJson<SourcesResponse>("/api/sources").then(setData).catch(setError);
+    fetchJson<AdapterInfo[]>("/api/sources/adapters")
+      .then((list) => setAdapters(Object.fromEntries(list.map((a) => [a.name, a.label]))))
+      .catch(() => {});
   }, []);
 
   const costOptions = useMemo(() => {
@@ -75,12 +99,13 @@ export default function SourceBrowser() {
         (horizon === "all" || s.horizon === horizon) &&
         (cost === "all" || s.cost === cost) &&
         (enabled === "all" || s.enabled === (enabled === "on")) &&
+        (access === "all" || accessOf(s) === access) &&
         (!q ||
           s.name.toLowerCase().includes(q) ||
           s.source_id.toLowerCase().includes(q) ||
           s.cluster.toLowerCase().includes(q))
     );
-  }, [data, query, horizon, cost, enabled]);
+  }, [data, query, horizon, cost, enabled, access]);
 
   const sortRows = (rows: SourceRow[]) => {
     if (!sort) return rows;
@@ -118,7 +143,13 @@ export default function SourceBrowser() {
 
       {data && (
         <>
-          <div className="mt-6 flex flex-wrap items-center gap-3">
+          <p className="mt-4 text-sm text-muted">
+            {data.sources.length} sources · {data.sources.filter((x) => x.enabled).length} switched on ·{" "}
+            {["H1", "H2", "H3"].map((h) => `${h} ${data.sources.filter((x) => x.horizon === h).length}`).join(" · ")} ·{" "}
+            {data.sources.filter((x) => x.cost !== "licensed").length} free ·{" "}
+            {data.sources.filter((x) => x.cost === "licensed").length} paid
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -162,6 +193,13 @@ export default function SourceBrowser() {
                 </button>
               ))}
             </div>
+            <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
+              {[["all", "All"], ["crawl", "Website"], ["query", "Data source"], ["none", "Never"]].map(([value, label]) => (
+                <button key={value} onClick={() => setAccess(value)} className={filterSegment(access === value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
             <span className="font-mono text-xs text-neutral-500">
               {filtered.length} of {data.sources.length}
             </span>
@@ -179,42 +217,66 @@ export default function SourceBrowser() {
                   </h2>
                   <span className="text-xs text-neutral-500">{meta?.meaning}</span>
                 </div>
-                <div className="mt-3 overflow-x-auto border border-neutral-200 bg-white">
+                <div className="mt-3 overflow-x-auto rounded-card border border-line bg-white">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                         <SortHeader label="Source" k="name" />
                         <th className="px-4 py-2.5 font-medium">Horizon</th>
+                        <th className="px-4 py-2.5 font-medium">How it&apos;s read</th>
                         <SortHeader label="Cluster" k="cluster" />
                         <SortHeader label="Cost" k="cost" />
                         <SortHeader label="Enabled" k="enabled" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
-                      {rows.map((s) => (
-                        <tr
-                          key={s.source_id}
-                          onClick={() => router.push(`/admin/sources/${s.source_id}`)}
-                          className="cursor-pointer hover:bg-neutral-50"
-                        >
-                          <td className="px-4 py-2.5">
-                            <div className="font-medium">{s.name}</div>
-                            <div className="font-mono text-xs text-neutral-500">
-                              {s.url}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 font-mono text-xs">{s.horizon}</td>
-                          <td className="px-4 py-2.5">{pretty(s.cluster)}</td>
-                          <td className="px-4 py-2.5">{COST_LABELS[s.cost] ?? s.cost}</td>
-                          <td className="px-4 py-2.5">
-                            <span
-                              className={`inline-block h-2 w-2 rounded-full ${
-                                s.enabled ? "bg-emerald-600" : "bg-neutral-300"
-                              }`}
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                      {rows.map((s) => {
+                        const how = accessOf(s);
+                        const owed = how === "query" ? backlog(s) : null;
+                        return (
+                          <tr
+                            key={s.source_id}
+                            onClick={() => router.push(`/admin/sources/${s.source_id}`)}
+                            className="cursor-pointer hover:bg-neutral-50"
+                          >
+                            <td className="px-4 py-2.5">
+                              <div className="flex flex-wrap items-center gap-2 font-medium">
+                                {s.name}
+                                {owed && (
+                                  <span className="bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] font-normal uppercase text-ink"
+                                    title="Raise the page budget or narrow the search">
+                                    ◐ Didn&apos;t finish · {owed}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-mono text-xs text-neutral-500">
+                                {s.url}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 font-mono text-xs">{s.horizon}</td>
+                            <td className="px-4 py-2.5 text-sm" title={how === "none" ? s.note : undefined}>
+                              {how === "none" && <span aria-hidden className="mr-1">🔒</span>}
+                              {ACCESS_LABELS[how]}
+                              {how === "query" && s.adapter && (
+                                <span className="block font-mono text-[11px] text-neutral-500">{adapters[s.adapter] ?? s.adapter}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5">{pretty(s.cluster)}</td>
+                            <td className="px-4 py-2.5">{COST_LABELS[s.cost] ?? s.cost}</td>
+                            <td className="px-4 py-2.5">
+                              {how === "none" ? (
+                                <span className="font-mono text-[11px] text-neutral-400">not collectable</span>
+                              ) : (
+                                <span
+                                  className={`inline-block h-2 w-2 rounded-full ${
+                                    s.enabled ? "bg-azure" : "bg-neutral-300"
+                                  }`}
+                                />
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

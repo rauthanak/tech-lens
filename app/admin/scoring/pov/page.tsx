@@ -1,10 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
-import { ApiError, fetchJson, sendJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import ConfirmAction from "@/components/ConfirmAction";
+import FabricLabel from "@/components/FabricLabel";
+import PageHeader from "@/components/PageHeader";
+import StatusChip from "@/components/StatusChip";
+import { writePovs } from "@/lib/actions";
+import { fetchJson } from "@/lib/api";
+import { formatDay, plural } from "@/lib/format";
+import { useHere, withFrom } from "@/lib/here";
+import { usePipeline } from "@/lib/pipeline";
+import { useTechLabel } from "@/lib/tech-labels";
+import { LIVE_DOT, PRIORITY } from "@/lib/theme";
 
 type PovRow = {
   _id: string;
@@ -13,15 +22,13 @@ type PovRow = {
   technology: string;
   version: number;
   composed_at: string;
+  assessed_at: string | null; // the assessment it was written from
   sections?: { headline?: string };
+  new_since_written: number | null;
+  placements: { fabric_id: string; fabric: string; priority: string | null; horizon: string | null }[];
 };
 
-type Uncomposed = {
-  scoring_run_id: string;
-  tech_id: string;
-  technology: string;
-  run_started_at: string;
-};
+type Waiting = { scoring_run_id: string; tech_id: string; technology: string; assessed_at: string };
 
 type Job = {
   _id: string;
@@ -32,244 +39,173 @@ type Job = {
   current: string[];
   failed: { tech_id: string; scoring_run_id: string; error: string }[];
   started_at: string;
-  finished_at?: string;
 } | null;
 
-export default function PovListPage() {
-  const [povs, setPovs] = useState<PovRow[] | null>(null);
-  const [uncomposed, setUncomposed] = useState<Uncomposed[]>([]);
-  const [job, setJob] = useState<Job>(null);
+type Library = { povs: PovRow[]; uncomposed: Waiting[]; assessed: number; job: Job };
+
+const PAGE = 24; // cards at a time; search and "Show more" appear once there are more
+
+function PovLibrary() {
+  const label = useTechLabel();
+  const here = useHere();
+  const p = usePipeline();
+  const [data, setData] = useState<Library | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  // tech_ids being composed by a click on this page (separate from the job)
-  const [inFlight, setInFlight] = useState<Set<string>>(new Set());
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [q, setQ] = useState("");
+  const [shown, setShown] = useState(PAGE);
 
   const load = useCallback(
-    () =>
-      fetchJson<{ povs: PovRow[]; uncomposed: Uncomposed[]; job: Job }>("/api/scoring/povs")
-        .then((d) => {
-          setPovs(d.povs);
-          setUncomposed(d.uncomposed);
-          setJob(d.job);
-          setError(null);
-        })
-        .catch(setError),
+    () => fetchJson<Library>("/api/scoring/povs").then((d) => { setData(d); setError(null); }).catch(setError),
     [],
   );
+  // reload as the writing job moves on, and when Points of View come or go
+  const job = p?.pov.job;
+  useEffect(() => { load(); }, [load, job?.done, job?.status, p?.pov.composed, p?.pov.pending]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // keep refreshing while a compose-all job runs or a row compose is in flight
-  const jobRunning = job?.status === "running";
-  const busy = jobRunning || inFlight.size > 0;
-  useEffect(() => {
-    if (busy && !timer.current) timer.current = setInterval(load, 5000);
-    if (!busy && timer.current) {
-      clearInterval(timer.current);
-      timer.current = null;
-    }
-    return () => {
-      if (timer.current) {
-        clearInterval(timer.current);
-        timer.current = null;
-      }
-    };
-  }, [busy, load]);
-
-  async function composeOne(u: Uncomposed) {
-    setNotice(null);
-    setInFlight((prev) => new Set(prev).add(u.tech_id));
-    try {
-      await sendJson(`/api/scoring/runs/${u.scoring_run_id}/pov/${u.tech_id}`, "POST", {});
-      await load();
-    } catch (e) {
-      setNotice(
-        `${u.technology}: ${e instanceof ApiError ? (e.detail ?? e.message) : "compose failed"}`,
-      );
-    } finally {
-      setInFlight((prev) => {
-        const next = new Set(prev);
-        next.delete(u.tech_id);
-        return next;
-      });
-    }
-  }
-
-  async function composeAll(recompose: boolean) {
-    setNotice(null);
-    if (recompose) {
-      const n = (povs?.length ?? 0) + uncomposed.length;
-      if (!window.confirm(`Recompose all ${n} PoVs? One LLM call each — existing documents are replaced (version bumps).`))
-        return;
-    }
-    try {
-      await sendJson("/api/scoring/povs/compose_all", "POST", { recompose });
-      await load();
-    } catch (e) {
-      setNotice(e instanceof ApiError ? (e.detail ?? e.message) : "failed to start");
-    }
-  }
-
-  const failedIds = new Set((job?.failed ?? []).map((f) => f.tech_id));
-
-  function rowState(u: Uncomposed): "composing" | "queued" | "failed" | "idle" {
-    if (inFlight.has(u.tech_id) || (jobRunning && job!.current.includes(u.tech_id)))
-      return "composing";
-    if (jobRunning) return failedIds.has(u.tech_id) ? "failed" : "queued";
-    return failedIds.has(u.tech_id) ? "failed" : "idle";
-  }
+  const povs = data?.povs ?? [];
+  const needle = q.trim().toLowerCase();
+  const matching = needle
+    ? povs.filter((pv) => `${label(pv.technology)} ${pv.sections?.headline ?? ""}`.toLowerCase().includes(needle))
+    : povs;
+  const waiting = data?.uncomposed ?? [];
+  const running = data?.job?.status === "running" ? data.job : null;
+  const failed = new Set((data?.job?.failed ?? []).map((f) => f.tech_id));
 
   return (
-    <div className="max-w-4xl">
-      <p className="text-sm text-neutral-600">
-        The deliverable — one Point of View per technology, in the client&apos;s
-        house format, every number traceable back to its assessment and its
-        source documents. Composed on demand; the scores never move.
-      </p>
+    <div>
+      <PageHeader title="Points of View"
+        intro="The radar's conclusions: one Point of View per technology, written from its latest assessment."
+        help={<>
+          <li>Newest first; click one to read it. Each card shows the headline, when it was written and when the
+            assessment it explains was made, and per fabric the priority (P1 act now to P6 just watch) and the
+            horizon (H1 near to H3 far). A fabric without one shows only its name.</li>
+          <li>&ldquo;New since written&rdquo; counts pages collected about the technology after its Point of View
+            was written.</li>
+          <li>Technologies assessed but without a Point of View yet are counted at the top. The link opens them on
+            Technologies, where you can write one (about 1 model call) or all of them.</li>
+          <li>A Point of View explains its assessment in Tata Communications&apos; house format, and every number
+            traces back to the assessment and its source pages. Writing or rewriting one never changes the
+            scores.</li>
+          <li>Rewrite all writes every assessed technology&apos;s Point of View again from its latest assessment,
+            including those not written yet. It says how many before it starts.</li>
+        </>} />
 
       {error != null && <BackendError error={error} />}
-      {notice && <p className="mt-3 font-mono text-xs text-red-800">{notice}</p>}
 
-      {job && (jobRunning || (job.failed?.length ?? 0) > 0 || job.status === "interrupted") && (
-        <div className="mt-4 flex flex-wrap items-center gap-3 border border-neutral-200 bg-white px-5 py-3">
-          {jobRunning ? (
-            <span className="animate-pulse bg-amber-100 px-2 py-0.5 font-mono text-[11px] uppercase text-amber-900">
-              composing
-            </span>
+      {data?.job && (running || data.job.failed.length > 0 || data.job.status === "interrupted") && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-line bg-white px-5 py-3 text-sm">
+          {running ? (
+            <span className="flex items-center gap-2"><span className={LIVE_DOT} />
+              Writing {running.done} of {running.total}</span>
           ) : (
-            <span className="bg-neutral-200 px-2 py-0.5 font-mono text-[11px] uppercase text-neutral-700">
-              {job.status}
-            </span>
+            <StatusChip status={data.job.status} />
           )}
-          <span className="font-mono text-xs tabular-nums text-neutral-600">
-            {job.done}/{job.total} PoVs
-            {(job.failed?.length ?? 0) > 0 && (
-              <span className="text-red-800"> · {job.failed.length} failed</span>
-            )}
-          </span>
-          {jobRunning && job.current.length > 0 && (
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-[#7a3c1e]">
-              {job.current.join(", ")}
-            </span>
+          {data.job.failed.length > 0 && <span className="text-failed">{data.job.failed.length} failed</span>}
+          {running && running.current.length > 0 && (
+            <span className="min-w-0 flex-1 truncate text-xs text-muted">now: {running.current.join(", ")}</span>
           )}
         </div>
       )}
 
-      {(uncomposed.length > 0 || (povs?.length ?? 0) > 0) && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          {uncomposed.length > 0 && (
-            <button
-              onClick={() => composeAll(false)}
-              disabled={jobRunning}
-              className="bg-[#171513] px-4 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
-            >
-              {jobRunning ? "Composing…" : `Compose pending (${uncomposed.length})`}
-            </button>
-          )}
-          {(povs?.length ?? 0) > 0 && (
-            <button
-              onClick={() => composeAll(true)}
-              disabled={jobRunning}
-              className="border border-neutral-300 bg-white px-4 py-2 text-sm hover:bg-neutral-100 disabled:opacity-50"
-            >
-              Recompose all ({(povs?.length ?? 0) + uncomposed.length})
-            </button>
-          )}
-        </div>
+      {waiting.length > 0 && (
+        <p className="mt-4 rounded-card border border-line bg-white px-5 py-3 text-sm">
+          {plural(waiting.length, "technology is", "technologies are")} ready for a Point of View: assessed, with
+          none written from that assessment yet.{" "}
+          <Link href="/admin/technologies?state=no_pov" className="text-link hover:underline">See and write them →</Link>
+        </p>
       )}
 
-      {povs && (
+      {data && (
         <div className="mt-5 space-y-3">
-          {povs.map((p) => (
-            <Link
-              key={p._id}
-              href={`/admin/scoring/pov/${p.scoring_run_id}/${p.tech_id}`}
-              className="block border border-neutral-200 bg-white px-5 py-4 hover:border-neutral-400"
-            >
-              <div className="flex flex-wrap items-baseline gap-3">
-                <span className="text-[17px] font-semibold">{p.technology}</span>
-                <span className="font-mono text-xs text-neutral-500">
-                  v{p.version} · composed {formatTime(p.composed_at)} · run {p.scoring_run_id}
-                </span>
-                {jobRunning && job!.current.includes(p.tech_id) ? (
-                  <span className="ml-auto animate-pulse bg-amber-100 px-2 py-0.5 font-mono text-[11px] uppercase text-amber-900">
-                    recomposing…
-                  </span>
-                ) : failedIds.has(p.tech_id) ? (
-                  <span className="ml-auto font-mono text-xs text-red-800">recompose failed</span>
-                ) : jobRunning && job!.recompose && p.composed_at < job!.started_at ? (
-                  <span className="ml-auto bg-neutral-100 px-2 py-0.5 font-mono text-[11px] uppercase text-neutral-500">
-                    queued
-                  </span>
-                ) : (
-                  <span className="ml-auto font-mono text-xs text-emerald-700">✓ composed</span>
-                )}
-              </div>
-              {p.sections?.headline && (
-                <p className="mt-1.5 border-l-2 border-[#8a4b2d]/40 pl-3 text-sm leading-relaxed text-neutral-700">
-                  {p.sections.headline}
-                </p>
-              )}
-            </Link>
-          ))}
-          {povs.length === 0 && (
-            <p className="border border-neutral-200 bg-white px-5 py-6 text-sm text-neutral-500">
-              No PoVs composed yet.
-            </p>
+          {povs.length > PAGE && (
+            <input type="search" value={q} placeholder="Search by technology or headline" aria-label="Search Points of View"
+              onChange={(e) => { setQ(e.target.value); setShown(PAGE); }}
+              className="w-full rounded-full border border-line bg-white px-4 py-2 text-sm outline-none focus:border-neutral-400" />
           )}
-        </div>
-      )}
-
-      {uncomposed.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-base font-semibold">Assessed, not yet composed</h2>
-          <p className="mt-1 text-sm text-neutral-600">
-            These technologies have scored assessments — compose them one at a
-            time, or use Compose pending above ({uncomposed.length} LLM calls).
-          </p>
-          <div className="mt-3 divide-y divide-neutral-100 border border-neutral-200 bg-white">
-            {uncomposed.map((u) => {
-              const state = rowState(u);
-              return (
-                <div
-                  key={`${u.scoring_run_id}-${u.tech_id}`}
-                  className="flex items-baseline gap-3 px-5 py-3"
-                >
-                  <span className="font-medium">{u.technology}</span>
-                  <span className="font-mono text-xs text-neutral-500">
-                    run {u.scoring_run_id} · {formatTime(u.run_started_at)}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,26rem),1fr))] gap-3">
+            {matching.slice(0, shown).map((pv) => (
+              <Link key={pv._id} href={withFrom(`/admin/scoring/pov/${pv.scoring_run_id}/${pv.tech_id}`, here)}
+                className="block rounded-card border border-line bg-white px-5 py-4 hover:border-neutral-400">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[17px] font-semibold">{label(pv.technology)}</span>
+                  <span className="text-xs text-neutral-500">
+                    Written {formatDay(pv.composed_at)}
+                    {pv.assessed_at && ` · assessed ${formatDay(pv.assessed_at)}`} · version {pv.version}
                   </span>
-                  <span className="ml-auto">
-                    {state === "composing" && (
-                      <span className="animate-pulse bg-amber-100 px-2 py-0.5 font-mono text-[11px] uppercase text-amber-900">
-                        composing…
-                      </span>
-                    )}
-                    {state === "queued" && (
-                      <span className="bg-neutral-100 px-2 py-0.5 font-mono text-[11px] uppercase text-neutral-500">
-                        queued
-                      </span>
-                    )}
-                    {(state === "idle" || state === "failed") && (
-                      <button
-                        onClick={() => composeOne(u)}
-                        className={`font-mono text-xs hover:underline ${
-                          state === "failed" ? "text-red-800" : "text-[var(--accent)]"
-                        }`}
-                      >
-                        {state === "failed" ? "failed — retry →" : "compose →"}
-                      </button>
-                    )}
+                  {(pv.new_since_written ?? 0) > 0 && (
+                    <span className="rounded-full bg-azure/10 px-2 py-0.5 text-xs text-ink">
+                      New since written: {plural(pv.new_since_written!, "page")}
+                    </span>
+                  )}
+                  <span className="ml-auto text-xs">
+                    {running && running.current.includes(pv.tech_id) ? (
+                      <span className="flex items-center gap-1.5"><span className={LIVE_DOT} />rewriting…</span>
+                    ) : failed.has(pv.tech_id) ? (
+                      <span className="text-failed">rewrite failed</span>
+                    ) : running?.recompose && pv.composed_at < running.started_at ? (
+                      <span className="text-neutral-500">queued</span>
+                    ) : null}
                   </span>
                 </div>
-              );
-            })}
+                {pv.sections?.headline && (
+                  <p className="mt-1.5 border-l-2 border-navy/30 pl-3 text-sm leading-relaxed text-neutral-700">
+                    {pv.sections.headline}
+                  </p>
+                )}
+                {pv.placements.length > 0 && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    {pv.placements.map((pl) => (
+                      <span key={pl.fabric_id} className="inline-flex items-center gap-1">
+                        <FabricLabel id={pl.fabric_id} name={pl.fabric} />
+                        {pl.priority && (
+                          <span className={`px-1 py-0.5 font-mono text-[11px] ${PRIORITY[pl.priority] ?? "bg-neutral-100"}`}>
+                            {pl.priority}
+                          </span>
+                        )}
+                        {pl.horizon && <span className="font-mono text-[11px] text-neutral-500">{pl.horizon}</span>}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </Link>
+            ))}
           </div>
-        </section>
+          {matching.length > shown && (
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+              <button type="button" onClick={() => setShown(shown + PAGE)}
+                className="rounded-full border border-line bg-white px-4 py-1.5 text-ink hover:bg-ground">
+                Show {Math.min(PAGE, matching.length - shown)} more
+              </button>
+              {shown} of {matching.length} shown
+            </div>
+          )}
+          {povs.length === 0 && (
+            <p className="rounded-card border border-line bg-white px-5 py-6 text-sm text-neutral-500">
+              No Points of View written yet.
+            </p>
+          )}
+          {povs.length > 0 && needle && matching.length === 0 && (
+            <p className="text-sm text-muted">Nothing matches the search.</p>
+          )}
+          {povs.length > 0 && data.assessed > 0 && (
+            <div className="pt-1">
+              <ConfirmAction label="Rewrite all" secondary
+                question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology, from its latest assessment${waiting.length ? `, including the ${waiting.length} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
+                confirmLabel="Rewrite" disabled={running ? "Points of View are being written." : null}
+                onConfirm={async () => { await writePovs(true); await load(); }} />
+            </div>
+          )}
+        </div>
       )}
+
     </div>
+  );
+}
+
+export default function PovListPage() {
+  return (
+    <Suspense fallback={null}>
+      <PovLibrary />
+    </Suspense>
   );
 }

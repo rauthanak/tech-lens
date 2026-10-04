@@ -1,10 +1,12 @@
-import Sidebar from "@/components/Sidebar";
+import NextStep from "@/components/NextStep";
+import TopBar from "@/components/TopBar";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="min-w-0 flex-1 px-10 py-8">{children}</main>
-    </div>
+    <>
+      <TopBar />
+      <NextStep />
+      <main className="mx-auto max-w-[1760px] px-6 py-8 lg:px-10">{children}</main>
+    </>
   );
 }

@@ -16,9 +16,20 @@ export function duration(start?: string | null, end?: string | null): string {
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-export const STATUS_STYLES: Record<string, string> = {
-  running: "bg-amber-100 text-amber-900",
-  terminating: "bg-amber-100 text-amber-900",
-  completed: "bg-emerald-100 text-emerald-900",
-  terminated: "bg-neutral-200 text-neutral-700",
-};
+/** A date as "3 Oct" (in the browser's own order). */
+export function formatDay(iso: string | null | undefined): string {
+  return iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+}
+
+/** "1 page", "3 pages". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+/** "IoT", "Interaction or IoT", "Cloud, Interaction or IoT". */
+export const orList = (items: string[]) =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+
+/** A stored day ("2026-10-01") as "Oct 1", or "Oct 1, 2026" with the year. */
+export function formatDate(ymd: string, year = false): string {
+  return new Date(`${ymd.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
+}

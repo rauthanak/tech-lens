@@ -1,476 +1,363 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
+import SignalItem from "@/components/SignalItem";
+import SignalPanel from "@/components/SignalPanel";
+import { fetchRunsPreview, type RunsPreview } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import { formatDay, plural } from "@/lib/format";
+import { useMedia } from "@/lib/media";
+import { usePipeline } from "@/lib/pipeline";
+import type { BriefingSummary, FoundHit, FoundResponse } from "@/lib/signals";
+import { useTechLabel } from "@/lib/tech-labels";
+import { itemHref, itemSentence } from "@/lib/waiting";
 
-type Health = { status: string; mongo: boolean };
+// The Briefing: everything a window of collecting, or one collection, found,
+// in one list. Recent findings come first, in the signal list's order, then
+// other findings; older articles (published more than 30 days before they
+// were collected) come last. The address holds what you see, so links and
+// back links return to it: days or run (the scope), type, tech, source and
+// signal (the side panel) — the names the Signals page used.
 
-type SourceRow = {
-  source_id: string;
-  horizon: "H1" | "H2" | "H3";
-  cost: string;
-  enabled: boolean;
-};
-
-type SourcesResponse = {
-  horizons: Record<string, { label?: string; meaning?: string }>;
-  sources: SourceRow[];
-};
-
-type Run = {
-  id: string;
-  status: string;
-  stage?: string;
-  run_start_date_time: string;
-  totals?: { pages_visited?: number; documents?: number; new_documents?: number };
-};
-
-type TechResponse = {
-  total: number;
-  summary?: { tech_count: number; tagged_docs: number; horizons?: Record<string, number> };
-  last_resolve?: { status: string; phase?: string } | null;
-};
-
-type ScoringOverview = {
-  fabrics: { total: number; enabled: number };
-  measures: { total: number };
-};
-
-type ScoringRun = {
-  _id: string;
-  status: string;
-  stage?: string;
-  progress: { techs_total: number; techs_done: number; llm_calls: number };
-  started_at: string;
-};
-
-type PovsResponse = {
-  povs: unknown[];
-  uncomposed: unknown[];
-  job?: { status: string; done: number; total: number } | null;
-};
-
-type Skill = { name: string; description?: string; version: number; enabled: boolean };
-
-const HORIZONS = ["H1", "H2", "H3"] as const;
-// Ordered single-hue shades of the portal's copper accent: nearer horizon = lighter.
-const HORIZON_SHADES: Record<string, string> = {
-  H1: "#d9b8a3",
-  H2: "#b97d55",
-  H3: "#8a4b2d",
-};
-const ACCENT = "#8a4b2d";
-const COSTS: { key: string; label: string }[] = [
-  { key: "free", label: "Free" },
-  { key: "free_tier", label: "Free tier" },
-  { key: "licensed", label: "Licensed" },
+const WINDOWS = [
+  { days: "7", label: "Last 7 days" },
+  { days: "30", label: "Last 30 days" },
+  { days: "90", label: "Last 90 days" },
+  { days: "all", label: "All time" },
 ];
+const PAGE = 20;
 
-const STATUS_STYLE: Record<string, string> = {
-  running: "bg-amber-100 text-amber-900",
-  terminating: "bg-amber-100 text-amber-900",
-  completed: "bg-emerald-100 text-emerald-900",
-  done: "bg-emerald-100 text-emerald-900",
-  terminated: "bg-neutral-200 text-neutral-700",
-  failed: "bg-red-100 text-red-900",
-};
+/** A query string from the values that are set. */
+const query = (values: Record<string, string | null>) =>
+  new URLSearchParams(Object.entries(values).filter((e): e is [string, string] => !!e[1])).toString();
 
-function StatusChip({ status }: { status?: string }) {
-  if (!status) return null;
-  return (
-    <span
-      className={`px-2 py-0.5 font-mono text-[11px] uppercase ${STATUS_STYLE[status] ?? "bg-neutral-100 text-neutral-600"}`}
-    >
-      {status}
-    </span>
-  );
+/** A collection's state in a few words; a stop or failure says why. */
+function runState(scope: { status: string; error: string | null }): string {
+  if (scope.status === "completed") return "Completed";
+  if (scope.status === "running" || scope.status === "terminating") return "Still collecting";
+  if (scope.error === "terminated by user") return "Stopped by you";
+  return `${scope.status === "failed" ? "Failed" : "Stopped"}${scope.error ? `: ${scope.error}` : ""}`;
 }
 
-function StatusCard({ name, ok, note }: { name: string; ok: boolean | null; note: string }) {
-  const dot = ok === null ? "bg-neutral-300" : ok ? "bg-emerald-600" : "bg-[#c4552f]";
-  const text = ok === null ? "Unknown" : ok ? "Operational" : "Down";
-  return (
-    <div className="flex items-center gap-4 border border-neutral-200 bg-white px-5 py-4">
-      <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
-      <div>
-        <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-          {name}
-        </div>
-        <div className="text-sm font-medium">
-          {text}
-          <span className="ml-2 font-normal text-neutral-500">{note}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+function RadarBriefing() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const label = useTechLabel();
+  const p = usePipeline();
+  // wide screens read a finding in a column beside the list, opened when one is
+  // clicked (the list keeps the width until then); narrower ones slide it over
+  const wide = useMedia("(min-width: 1440px)");
+  const docked = wide && !!params.get("signal");
+  const run = params.get("run") ?? "";
+  const days = WINDOWS.find((w) => w.days === params.get("days"))?.days ?? "7";
+  const type = params.get("type") ?? "";
+  const tech = params.get("tech") ?? "";
+  const source = params.get("source") ?? "";
 
-function BreakdownRow({
-  label,
-  value,
-  total,
-  color,
-  chip,
-  hint,
-}: {
-  label: string;
-  value: number;
-  total: number;
-  color: string;
-  chip?: string;
-  hint?: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 py-2" title={hint}>
-      {chip && <span className="h-2 w-2 shrink-0" style={{ background: chip }} />}
-      <span className="w-24 shrink-0 truncate text-sm">{label}</span>
-      <div className="h-1.5 min-w-0 flex-1 bg-neutral-100">
-        <div
-          className="h-full"
-          style={{ width: `${total ? (value / total) * 100 : 0}%`, background: color }}
-        />
-      </div>
-      <span className="w-9 shrink-0 text-right font-mono text-xs tabular-nums text-neutral-600">
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  sub,
-  children,
-}: {
-  label: string;
-  value?: string | number;
-  sub?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="border border-neutral-200 bg-white px-5 py-4">
-      <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">{label}</div>
-      {value !== undefined && (
-        <div className="mt-2 text-[40px] font-semibold leading-none tabular-nums">{value}</div>
-      )}
-      {sub && <div className="mt-2.5 text-sm text-neutral-600">{sub}</div>}
-      {children}
-    </div>
-  );
-}
-
-function SectionHead({ title, href }: { title: string; href: string }) {
-  return (
-    <div className="flex items-baseline gap-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <Link href={href} className="text-sm text-[var(--accent)] underline underline-offset-4">
-        open →
-      </Link>
-    </div>
-  );
-}
-
-const TILES = "mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,230px),1fr))] gap-3";
-
-export default function OverviewPage() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [apiDown, setApiDown] = useState(false);
-  const [data, setData] = useState<SourcesResponse | null>(null);
-  const [runs, setRuns] = useState<Run[] | null>(null);
-  const [tech, setTech] = useState<TechResponse | null>(null);
-  const [scoring, setScoring] = useState<ScoringOverview | null>(null);
-  const [scoringRuns, setScoringRuns] = useState<ScoringRun[] | null>(null);
-  const [povs, setPovs] = useState<PovsResponse | null>(null);
-  const [skills, setSkills] = useState<Skill[] | null>(null);
+  const [summary, setSummary] = useState<BriefingSummary | null>(null);
+  const [items, setItems] = useState<FoundHit[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [sourceName, setSourceName] = useState<string | null>(null);
+  const [preview, setPreview] = useState<RunsPreview | null>(null);
+  const listToken = useRef(0); // the latest list request: older answers are dropped
+
+  const setParams = (changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(params.toString());
+    for (const [k, v] of Object.entries(changes)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    next.delete("signal");
+    const rest = next.toString();
+    router.replace(rest ? `${pathname}?${rest}` : pathname, { scroll: false });
+  };
+
+  // the summary: again for a new scope or filter, and when a collection or check finishes
+  const finished = p ? `${p.collect.run_id}:${p.collect.status}:${p.signals.recheck?.status ?? ""}` : "";
+  useEffect(() => {
+    let current = true;
+    fetchJson<BriefingSummary>(`/api/briefing?${query({
+      ...(run ? { run_id: run } : { days }), tech: tech || null, source_id: source || null })}`)
+      .then((s) => { if (current) { setSummary(s); setError(null); } })
+      .catch((e) => { if (current) setError(e); });
+    return () => { current = false; };
+  }, [run, days, tech, source, finished]);
+
+  // the list pages through the summary's fixed scope
+  const listUrl = useCallback((s: BriefingSummary, skip: number) => `/api/signals/found?${query({
+    sort: "briefing", limit: String(PAGE), skip: String(skip),
+    ...("run_id" in s.scope ? { run_id: s.scope.run_id } : { since: s.scope.from, until: s.scope.to }),
+    tech: tech || null, source_id: source || null, signal_id: type || null })}`, [tech, source, type]);
 
   useEffect(() => {
-    fetchJson<Health>("/api/health")
-      .then(setHealth)
-      .catch(() => setApiDown(true));
-    fetchJson<SourcesResponse>("/api/sources").then(setData).catch(setError);
-    fetchJson<{ runs: Run[] }>("/api/runs").then((d) => setRuns(d.runs)).catch(() => {});
-    fetchJson<TechResponse>("/api/technologies?limit=1").then(setTech).catch(() => {});
-    fetchJson<ScoringOverview>("/api/scoring/overview").then(setScoring).catch(() => {});
-    fetchJson<{ scoring_runs: ScoringRun[] }>("/api/scoring/runs")
-      .then((d) => setScoringRuns(d.scoring_runs))
-      .catch(() => {});
-    fetchJson<PovsResponse>("/api/scoring/povs").then(setPovs).catch(() => {});
-    fetchJson<{ prompts: Skill[] }>("/api/prompts").then((d) => setSkills(d.prompts)).catch(() => {});
-  }, []);
+    if (!summary) return;
+    const token = ++listToken.current;
+    fetchJson<FoundResponse>(listUrl(summary, 0))
+      .then((d) => { if (token === listToken.current) { setItems(d.hits); setTotal(d.total); } })
+      .catch((e) => { if (token === listToken.current) setError(e); });
+  }, [summary, listUrl]);
 
-  const stats = useMemo(() => {
-    if (!data) return null;
-    const s = data.sources;
-    const byHorizon = Object.fromEntries(
-      HORIZONS.map((h) => [h, s.filter((x) => x.horizon === h).length])
-    );
-    const byCost: Record<string, number> = {};
-    for (const x of s) byCost[x.cost] = (byCost[x.cost] ?? 0) + 1;
-    return {
-      total: s.length,
-      enabled: s.filter((x) => x.enabled).length,
-      byHorizon,
-      byCost,
-    };
-  }, [data]);
+  const showMore = () => {
+    if (!summary || !items) return;
+    const token = listToken.current;
+    setMore(true);
+    fetchJson<FoundResponse>(listUrl(summary, items.length))
+      .then((d) => { if (token === listToken.current) { setItems([...items, ...d.hits]); setTotal(d.total); } })
+      .catch(setError)
+      .finally(() => setMore(false));
+  };
 
-  const latestRun = runs?.[0];
-  const latestScoring = scoringRuns?.[0];
-  const techHorizons = tech?.summary?.horizons ?? {};
-  const techHorizonTotal = HORIZONS.reduce((n, h) => n + (techHorizons[h] ?? 0), 0);
+  useEffect(() => {
+    if (!source) return;
+    fetchJson<{ name: string }>(`/api/sources/${encodeURIComponent(source)}`)
+      .then((s) => setSourceName(s.name)).catch(() => {});
+  }, [source]);
+
+  const neverCollected = p?.collect.status === "none";
+  useEffect(() => {
+    if (neverCollected) fetchRunsPreview().then(setPreview).catch(() => {});
+  }, [neverCollected]);
+
+  const s = summary;
+  const scope = s?.scope;
+  const runScope = scope && "run_id" in scope ? scope : null;
+  const waiting = p?.for_analyst.filter((i) => i.kind !== "check") ?? [];
+  const typeRow = s?.types.find((t) => t.signal_id === type);
+  const typeName = (id: string) => s?.types.find((t) => t.signal_id === id)?.name ?? id;
+  // per band and type, counts for the headers (the summary has them per type)
+  const bandCount = (older: boolean) => (typeRow ? (older ? typeRow.older : typeRow.count - typeRow.older)
+    : s ? (older ? s.counts.older : s.counts.findings - s.counts.older) : 0);
+  const typeCount = (id: string, older: boolean) => {
+    const t = s?.types.find((x) => x.signal_id === id);
+    return t ? (older ? t.older : t.count - t.older) : 0;
+  };
 
   return (
     <div>
-      <PageHeader eyebrow="Overview" title="Radar at a glance">
-        <p className="mt-2 max-w-2xl text-sm text-neutral-600">
-          Health of the Tech Atlas service and a summary of every register —
-          scout runs, sources, technologies, scoring and skills.
-        </p>
+      <PageHeader title="Radar briefing"
+        intro="What the radar found on the sources it watches, with your signal types first, in your signal list's order."
+        help={<>
+          <li>Each row is a finding: one development found on a page, like a funding round, a product launch or a
+            partnership. Click it for the details, the quote and the source; a technology tag opens that technology.</li>
+          <li>Recent findings were published within 30 days of being collected, or give no publication date (their
+            row shows when they were collected instead). Older articles were published earlier and only found
+            now.</li>
+          <li>Your signal types come first, in the order of your signal list, then Other: notable findings that
+            aren&apos;t on the list. Reorder the list in{" "}
+            <Link href="/admin/signals/list" className="text-link hover:underline">Setup → Signal list</Link>, at no
+            model cost.</li>
+          <li>The rail counts each type; click one to show only that type. The window menu sets how far back to look,
+            by collection date.</li>
+          <li>&ldquo;Waiting for you&rdquo; lists work that needs your go-ahead, such as assessments and Points of
+            View. Nothing on this page spends model calls.</li>
+        </>}
+        right={!run && (
+        <label className="shrink-0">
+          <span className="sr-only">Window</span>
+          <select value={days} onChange={(e) => setParams({ days: e.target.value === "7" ? null : e.target.value })}
+            className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm text-ink">
+            {WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.label}</option>)}
+          </select>
+        </label>
+      )}>
+        {s && (
+          <p className="mt-2 text-[14.5px] text-muted">
+            {runScope && (
+              <>Collection of {formatDay(runScope.started_at)} · {runState(runScope)} · </>
+            )}
+            <b className="font-semibold text-ink">{s.counts.findings.toLocaleString()}</b>{" "}
+            {s.counts.findings === 1 ? "finding" : "findings"} from{" "}
+            <b className="font-semibold text-ink">{s.counts.pages.toLocaleString()}</b> new or changed{" "}
+            {s.counts.pages === 1 ? "page" : "pages"}
+            {!runScope && s.freshness && (
+              <> · last collected {formatDay(s.freshness.finished_at)} from {plural(s.freshness.sources, "source")}</>
+            )}
+          </p>
+        )}
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
 
-      <section className="mt-8">
-        <h2 className="text-lg font-semibold">Service health</h2>
-        <div className="mt-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
-          <StatusCard
-            name="Tech Atlas API"
-            ok={apiDown ? false : health ? true : null}
-            note={apiDown ? "nothing answered on port 8100" : "port 8100"}
-          />
-          <StatusCard
-            name="MongoDB"
-            ok={apiDown ? null : health ? health.mongo : null}
-            note={apiDown ? "unknown while the API is down" : "via /api/health"}
-          />
+      {neverCollected ? (
+        <div className="mt-8 rounded-card border border-line bg-white px-6 py-5">
+          <p className="text-sm">
+            Nothing collected yet.{" "}
+            {preview && `A collection visits up to ${preview.pages_per_source * preview.websites} pages across ${plural(preview.websites + preview.data_sources, "source")} and finds what's new on each page.`}
+          </p>
+          <Link href="/admin/operations"
+            className="mt-3 inline-block rounded-full bg-navy px-4 py-2 text-sm text-white hover:bg-navy-strong">
+            Collect from Operations
+          </Link>
         </div>
-      </section>
+      ) : (
+        <>
+          {waiting.length > 0 && (
+            <div className="mt-5 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 rounded-card border border-line bg-white px-5 py-3 text-sm">
+              <span className="flex items-center gap-2 font-semibold">
+                <span className="h-2 w-2 rounded-full bg-azure" aria-hidden />Waiting for you
+              </span>
+              {waiting.map((item) => (
+                <Link key={item.kind} href={itemHref(item)} className="text-link hover:underline">
+                  {itemSentence(item)} →
+                </Link>
+              ))}
+            </div>
+          )}
 
-      {runs && (
-        <section className="mt-10">
-          <SectionHead title="Runs" href="/admin/runs" />
-          <div className={TILES}>
-            <Tile
-              label="Scout runs"
-              value={runs.length}
-              sub={
-                latestRun ? (
-                  <span className="flex flex-wrap items-center gap-2">
-                    latest <StatusChip status={latestRun.status} />
-                    {(latestRun.status === "running" || latestRun.status === "terminating") &&
-                      latestRun.stage && (
-                        <span className="font-mono text-xs text-[#7a3c1e]">{latestRun.stage}</span>
-                      )}
-                  </span>
-                ) : (
-                  "no runs yet"
-                )
-              }
-            />
-            <Tile
-              label="Pages visited"
-              value={(latestRun?.totals?.pages_visited ?? 0).toLocaleString()}
-              sub="in the latest run"
-            />
-            <Tile
-              label="Documents"
-              value={(latestRun?.totals?.documents ?? 0).toLocaleString()}
-              sub={`${(latestRun?.totals?.new_documents ?? 0).toLocaleString()} new in the latest run`}
-            />
-            <Tile
-              label="Latest run started"
-              sub={latestRun ? formatTime(latestRun.run_start_date_time) : "—"}
-            />
-          </div>
-        </section>
+          {s && (
+            <div className={`mt-6 grid grid-cols-1 gap-7 min-[900px]:grid-cols-[240px_minmax(0,1fr)] ${docked
+              ? "min-[1440px]:grid-cols-[220px_minmax(0,1fr)_400px] min-[1800px]:grid-cols-[240px_minmax(0,1fr)_460px]" : ""}`}>
+              <nav aria-label="Signal types"
+                className="min-w-0 min-[900px]:sticky min-[900px]:top-4 min-[900px]:max-h-[calc(100vh-2rem)] min-[900px]:self-start min-[900px]:overflow-y-auto">
+                <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                  Found in this {runScope ? "collection" : "window"}
+                </h2>
+                <div className="flex gap-1.5 overflow-x-auto pb-1.5 min-[900px]:grid min-[900px]:gap-px min-[900px]:overflow-visible min-[900px]:pb-0">
+                  {[{ signal_id: "", name: "All findings", count: s.counts.findings }, ...s.types].map((t) => {
+                    const on = t.signal_id === type;
+                    return (
+                      <button key={t.signal_id || "all"} type="button" aria-pressed={on}
+                        onClick={() => setParams({ type: on || !t.signal_id ? null : t.signal_id })}
+                        className={`flex shrink-0 items-baseline justify-between gap-3 rounded-full border px-3 py-1 text-left text-[13px] min-[900px]:rounded-md min-[900px]:border-0 min-[900px]:px-2.5 ${
+                          on ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground min-[900px]:bg-transparent"} ${
+                          !t.signal_id ? "font-semibold min-[900px]:mb-1.5" : ""} ${t.signal_id === "other" ? "border-dashed min-[900px]:mt-1.5" : ""}`}>
+                        <span>{t.name}</span>
+                        <span className={`text-xs tabular-nums ${on ? "text-white/75" : "text-muted"}`}>{t.count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </nav>
+
+              <section aria-label="Findings" className="min-w-0">
+                {(type || tech || source || run) && (
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
+                    Showing
+                    {type && <FilterPill label={`${typeName(type)} · ${typeRow?.count ?? 0}`} onRemove={() => setParams({ type: null })} />}
+                    {tech && <FilterPill label={`Technology: ${label(tech)}`} onRemove={() => setParams({ tech: null })} />}
+                    {source && <FilterPill label={`Source: ${sourceName ?? source}`} onRemove={() => setParams({ source: null })} />}
+                    {runScope && <FilterPill label={`Collection of ${formatDay(runScope.started_at)}`} onRemove={() => setParams({ run: null })} />}
+                  </div>
+                )}
+
+                {items && items.length === 0 && (
+                  <div className="rounded-card border border-line bg-white px-6 py-5 text-sm">
+                    {type ? `No ${typeName(type)} findings here.`
+                      : runScope ? "This collection found nothing new."
+                        : `No findings in the ${WINDOWS.find((w) => w.days === days)!.label.toLowerCase()}.`}
+                    {!type && !runScope && s.freshness && ` The last collection was ${formatDay(s.freshness.finished_at)}.`}
+                    {!type && !runScope && days === "7" && (
+                      <button type="button" onClick={() => setParams({ days: "30" })}
+                        className="ml-3 rounded-full border border-line bg-white px-3.5 py-1 hover:bg-ground">
+                        Show the last 30 days
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {items && items.length > 0 && (
+                  <Findings items={items} grouped={!type} typeName={typeName} bandCount={bandCount} typeCount={typeCount} />
+                )}
+
+                {items && items.length > 0 && (
+                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted">
+                    {items.length < total ? (
+                      <>
+                        <button type="button" onClick={showMore} disabled={more}
+                          className="rounded-full border border-line bg-white px-4 py-1.5 text-ink hover:bg-ground disabled:opacity-60">
+                          {more ? "Loading…" : `Show ${Math.min(PAGE, total - items.length)} more`}
+                        </button>
+                        {items.length} of {total.toLocaleString()} shown
+                      </>
+                    ) : `That's all ${plural(total, "finding")}.`}
+                  </div>
+                )}
+              </section>
+
+              {docked && (
+                <aside aria-label="Finding details" className="sticky top-4 self-start">
+                  <SignalPanel docked />
+                </aside>
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      {stats && (
-        <section className="mt-10">
-          <SectionHead title="Sources" href="/admin/sources" />
-          <div className={TILES}>
-            <Tile
-              label="In the register"
-              value={stats.total}
-              sub={`${stats.enabled} enabled · ${stats.total - stats.enabled} disabled`}
-            >
-              <div className="mt-2 h-1.5 bg-neutral-100">
-                <div
-                  className="h-full"
-                  style={{
-                    width: `${stats.total ? (stats.enabled / stats.total) * 100 : 0}%`,
-                    background: ACCENT,
-                  }}
-                />
-              </div>
-            </Tile>
-
-            <Tile label="By horizon">
-              <div className="mt-1">
-                {HORIZONS.map((h) => (
-                  <BreakdownRow
-                    key={h}
-                    label={h}
-                    hint={`${data?.horizons[h]?.label ?? h} — ${data?.horizons[h]?.meaning ?? ""}`}
-                    value={stats.byHorizon[h]}
-                    total={stats.total}
-                    color={HORIZON_SHADES[h]}
-                    chip={HORIZON_SHADES[h]}
-                  />
-                ))}
-              </div>
-              <p className="mt-1 text-xs text-neutral-500">
-                H1 known misses · H2 catchable inflections · H3 blind spots
-              </p>
-            </Tile>
-
-            <Tile label="By cost">
-              <div className="mt-1">
-                {COSTS.map((c) => (
-                  <BreakdownRow
-                    key={c.key}
-                    label={c.label}
-                    value={stats.byCost[c.key] ?? 0}
-                    total={stats.total}
-                    color={ACCENT}
-                  />
-                ))}
-              </div>
-              <p className="mt-1 text-xs text-neutral-500">
-                {(stats.byCost.free ?? 0) + (stats.byCost.free_tier ?? 0)} free ·{" "}
-                {stats.byCost.licensed ?? 0} paid
-              </p>
-            </Tile>
-          </div>
-        </section>
-      )}
-
-      {tech && (
-        <section className="mt-10">
-          <SectionHead title="Technologies" href="/admin/technologies" />
-          <div className={TILES}>
-            <Tile
-              label="In the register"
-              value={(tech.summary?.tech_count ?? tech.total).toLocaleString()}
-              sub="resolved, deduplicated technologies"
-            />
-            <Tile
-              label="Tagged documents"
-              value={(tech.summary?.tagged_docs ?? 0).toLocaleString()}
-              sub="stamped with canonical names"
-            />
-            <Tile label="By horizon">
-              <div className="mt-1">
-                {HORIZONS.map((h) => (
-                  <BreakdownRow
-                    key={h}
-                    label={h}
-                    value={techHorizons[h] ?? 0}
-                    total={techHorizonTotal}
-                    color={HORIZON_SHADES[h]}
-                    chip={HORIZON_SHADES[h]}
-                  />
-                ))}
-              </div>
-              <p className="mt-1 text-xs text-neutral-500">technologies carrying a horizon tag</p>
-            </Tile>
-            <Tile
-              label="Last resolve"
-              sub={
-                tech.last_resolve ? (
-                  <span className="flex flex-wrap items-center gap-2">
-                    <StatusChip status={tech.last_resolve.status} />
-                    <span className="font-mono text-xs text-neutral-500">
-                      {tech.last_resolve.phase ?? ""}
-                    </span>
-                  </span>
-                ) : (
-                  "no resolve yet"
-                )
-              }
-            />
-          </div>
-        </section>
-      )}
-
-      {(scoring || scoringRuns || povs) && (
-        <section className="mt-10">
-          <SectionHead title="Scoring" href="/admin/scoring" />
-          <div className={TILES}>
-            {scoring && (
-              <Tile
-                label="Framework"
-                value={scoring.measures.total}
-                sub={`measures across 3 TORA axes · ${scoring.fabrics.enabled} of ${scoring.fabrics.total} fabrics enabled`}
-              />
-            )}
-            <Tile
-              label="Latest scoring run"
-              value={
-                latestScoring
-                  ? `${latestScoring.progress.techs_done}/${latestScoring.progress.techs_total}`
-                  : "—"
-              }
-              sub={
-                latestScoring ? (
-                  <span className="flex flex-wrap items-center gap-2">
-                    <StatusChip status={latestScoring.status} />
-                    <span className="font-mono text-xs text-neutral-500">
-                      {latestScoring.progress.llm_calls.toLocaleString()} LLM calls
-                    </span>
-                  </span>
-                ) : (
-                  "technologies assessed"
-                )
-              }
-            />
-            {povs && (
-              <Tile
-                label="Points of view"
-                value={povs.povs.length}
-                sub={
-                  povs.job?.status === "running"
-                    ? `composing — ${povs.job.done}/${povs.job.total}`
-                    : `composed · ${povs.uncomposed.length} pending`
-                }
-              />
-            )}
-          </div>
-        </section>
-      )}
-
-      {skills && (
-        <section className="mt-10">
-          <SectionHead title="Skills" href="/admin/prompts" />
-          <div className={TILES}>
-            <Tile
-              label="In the library"
-              value={skills.length}
-              sub={`${skills.filter((s) => s.enabled).length} enabled · versioned, editable, fetched at runtime`}
-            />
-            <Tile label="By name">
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {skills.map((s) => (
-                  <Link
-                    key={s.name}
-                    href={`/admin/prompts/${s.name}`}
-                    title={s.description}
-                    className="bg-neutral-100 px-2 py-0.5 font-mono text-[11px] text-neutral-700 hover:bg-[#8a4b2d]/10 hover:text-[#7a3c1e]"
-                  >
-                    {s.name} <span className="text-neutral-400">v{s.version}</span>
-                  </Link>
-                ))}
-              </div>
-            </Tile>
-          </div>
-        </section>
-      )}
+      {!wide && <SignalPanel />}
     </div>
+  );
+}
+
+/** The findings in two bands, recent and older, each with a small header per
+ *  signal type (left out when one type is chosen). */
+function Findings({ items, grouped, typeName, bandCount, typeCount }: {
+  items: FoundHit[];
+  grouped: boolean;
+  typeName: (id: string) => string;
+  bandCount: (older: boolean) => number;
+  typeCount: (id: string, older: boolean) => number;
+}) {
+  const bands = [false, true]
+    .map((older) => ({ older, rows: items.filter((h) => h.older === older) }))
+    .filter((b) => b.rows.length > 0);
+  return (
+    <div className="space-y-5">
+      {bands.map(({ older, rows }) => (
+        <section key={String(older)} className="overflow-hidden rounded-card border border-line bg-white">
+          <header className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-neutral-100 px-5 py-3.5 ${older ? "bg-neutral-50" : ""}`}>
+            <h2 className="text-[17px] font-semibold">{older ? "Older articles" : "Recent findings"} · {bandCount(older)}</h2>
+            <p className="text-[13px] text-muted">
+              {older ? "Published more than 30 days before they were collected: found now, but not new."
+                : "Published within 30 days of being collected, or undated; your signal types first, in your signal list's order, then other findings."}
+            </p>
+          </header>
+          {rows.map((h, i) => {
+            const head = grouped && (i === 0 || rows[i - 1].signal_id !== h.signal_id);
+            return (
+              <Fragment key={`${h.doc_id}:${h.n}`}>
+                {head && (
+                  <div className={`flex gap-2 px-5 pb-1 pt-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy ${i > 0 ? "border-t border-neutral-100" : ""}`}>
+                    {h.signal_id === "other" ? "Other · not on your signal list" : typeName(h.signal_id)}
+                    <span className="text-faint">{typeCount(h.signal_id, older)}</span>
+                  </div>
+                )}
+                <div className={!head && i > 0 ? "border-t border-neutral-100" : ""}>
+                  <SignalItem item={h} />
+                </div>
+              </Fragment>
+            );
+          })}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** An active filter, with × to remove it. */
+function FilterPill({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-navy py-1 pl-3 pr-1.5 text-[13px] text-white">
+      {label}
+      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`}
+        className="rounded-full px-1.5 leading-none text-white/80 hover:bg-white/15 hover:text-white">
+        ×
+      </button>
+    </span>
+  );
+}
+
+export default function BriefingPage() {
+  return (
+    <Suspense fallback={null}>
+      <RadarBriefing />
+    </Suspense>
   );
 }

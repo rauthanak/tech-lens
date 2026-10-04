@@ -1,29 +1,45 @@
 @import "tailwindcss";
 
-/* Light neutral ground, dark text, one copper accent — same look as radar-portal. */
-:root {
-  --accent: #8a4b2d;
-  --ink: #1c1a17;
+/* The Tata Communications look: light pages under a dark brand header.
+   Ground, navy-strong and the shade ramp in lib/theme.ts are derived;
+   every other colour comes from tatacommunications.com. */
+@theme {
+  --color-ink: #040a0e;      --color-muted: #494a52;   --color-faint: #a6abb5;
+  --color-line: #d1d6dc;     --color-ground: #f4f6f9;  --color-surface: #ffffff;
+  --color-navy: #041a4a;     --color-navy-strong: #020e2b;
+  --color-link: #0270e0;     --color-azure: #00a4ff;
+  --color-failed: #b60f17;   --color-failed-dot: #f0424c;
+  --color-network: #3cc3c2;  --color-cloud: #ff8437;
+  --color-iot: #59ca80;      --color-interaction: #9e4aff;
+  /* the client's Security page uses its brand azure; its Media page, violet */
+  --color-security: #00a4ff; --color-media: #bf96ff;
+  --radius-card: 10px;
 }
+@theme inline { --font-sans: var(--font-brand), system-ui, sans-serif; }
 
-body {
-  background: #f7f5f2;
-  color: var(--ink);
-}
-
-/* Display face for page titles, matching the reference layout */
+/* Page titles and the Point of View headline: the brand sans (inherited) at
+   regular weight with slightly tight letter-spacing, as on the client's site */
 .font-display {
-  font-family: Georgia, "Times New Roman", ui-serif, serif;
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 
-/* Extracted-article box: soft shaded card with a rounded copper scrollbar.
+/* The brand header: near-black fading to deep indigo, an azure glow at the
+   far end, and a thin azure bottom edge */
+.brand-header {
+  background:
+    radial-gradient(45% 180% at 100% 50%, rgb(0 164 255 / 0.3), transparent),
+    linear-gradient(90deg, var(--color-ink), #080f37);
+  border-bottom: 1px solid var(--color-azure);
+}
+
+/* Extracted-article box: a quiet panel with a rounded grey scrollbar.
    The standard scrollbar-* properties override ::-webkit-scrollbar styling in
    Chromium, so they are gated to browsers without the webkit pseudo-elements. */
 @supports not selector(::-webkit-scrollbar) {
   .article-scroll {
     scrollbar-width: thin;
-    scrollbar-color: #b08e6e transparent;
+    scrollbar-color: var(--color-faint) transparent;
   }
 }
 .article-scroll::-webkit-scrollbar {
@@ -37,24 +53,24 @@ body {
   border-radius: 9999px;
   border: 3px solid transparent;
   background-clip: padding-box;
-  background-color: #cdb9a6;
+  background-color: var(--color-line);
   transition: background-color 150ms;
 }
 .article-scroll:hover::-webkit-scrollbar-thumb {
-  background-color: #b08e6e;
+  background-color: var(--color-faint);
 }
 .article-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: #8a4b2d;
+  background-color: var(--color-muted);
 }
 
 /* Marching-ants border for the executing stage box in the run flow chart:
    four repeating-gradient edges whose background-position animates clockwise. */
 .stage-ants {
   background-image:
-    repeating-linear-gradient(90deg, #8a4b2d 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(90deg, #8a4b2d 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(0deg, #8a4b2d 0 6px, transparent 6px 12px),
-    repeating-linear-gradient(0deg, #8a4b2d 0 6px, transparent 6px 12px);
+    repeating-linear-gradient(90deg, var(--color-azure) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(90deg, var(--color-azure) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, var(--color-azure) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, var(--color-azure) 0 6px, transparent 6px 12px);
   background-size: 12px 2px, 12px 2px, 2px 12px, 2px 12px;
   background-position: 0 0, 12px 100%, 0 12px, 100% 0;
   background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
@@ -71,21 +87,35 @@ body {
   }
 }
 
-/* PoV print/PDF: keep score-chip colors, sane margins, no mid-card breaks */
+/* PoV print/PDF: white paper, score-chip colours kept. Text flows across
+   pages (at least 3 lines either side of a break) and headings stay with it;
+   small blocks (a card, a metric, a table row) carry break-inside-avoid in
+   the page itself, so no page is left half empty. */
 @media print {
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  body {
+    background: #fff;
+    orphans: 3;
+    widows: 3;
+  }
   main {
     padding: 0 !important;
   }
-  section,
-  table,
+  h2,
+  summary {
+    break-after: avoid;
+  }
   tr {
     break-inside: avoid;
   }
+  /* How the scores were derived prints only when the reader opened it */
+  details.derivation:not([open]) {
+    display: none;
+  }
   @page {
-    margin: 18mm 16mm;
+    margin: 16mm;
   }
 }

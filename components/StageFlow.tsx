@@ -8,14 +8,14 @@ type BoxState = "done" | "active" | "failed" | "pending";
 
 const BOX_STYLE: Record<BoxState, string> = {
   done: "border border-neutral-300 bg-white",
-  active: "border border-transparent bg-[#8a4b2d]/5 text-[#7a3c1e]",
-  failed: "border border-red-300 bg-red-50",
+  active: "border border-transparent bg-azure/10 text-ink", // the marching ants draw its azure border
+  failed: "border border-failed/40 bg-failed/5",
   pending: "border border-dashed border-neutral-200 bg-neutral-50 text-neutral-400",
 };
 
 /**
  * Vertical process-flow ladder for a run: one box per canonical stage,
- * marching-ants border on the executing stage, green check on completed ones.
+ * marching-ants border on the executing stage, grey check on completed ones.
  */
 export default function StageFlow({
   stages,
@@ -80,19 +80,19 @@ export default function StageFlow({
                 <span aria-hidden className="stage-ants pointer-events-none absolute -inset-px" />
               )}
               {state === "done" && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white">
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-neutral-200 text-[9px] font-bold text-muted">
                   ✓
                 </span>
               )}
               {state === "failed" && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[9px] font-bold text-white">
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-failed-dot text-[9px] font-bold text-ink">
                   ✕
                 </span>
               )}
               <div className="font-mono text-[11px] uppercase tracking-wider">{stage}</div>
               {sub && (
                 <div
-                  className={`mt-0.5 font-mono text-[10px] ${state === "active" ? "text-[#8a4b2d]" : "text-neutral-400"}`}
+                  className={`mt-0.5 font-mono text-[10px] ${state === "active" ? "text-ink" : "text-neutral-400"}`}
                 >
                   {sub}
                 </div>

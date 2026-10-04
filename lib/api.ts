@@ -39,15 +39,15 @@ export async function fetchJson<T>(url: string): Promise<T> {
 
 export async function sendJson<T>(
   url: string,
-  method: "POST" | "PUT",
-  body: unknown
+  method: "POST" | "PUT" | "DELETE",
+  body?: unknown
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(null, "network");
@@ -69,4 +69,10 @@ export function explain(error: unknown): { title: string; hint: string } {
     title: `The backend returned an error (HTTP ${status})`,
     hint: "Check the tech-atlas terminal for the traceback.",
   };
+}
+
+/** Tell listeners (the top bar's Changes count) that configuration was saved. */
+export const CONFIG_CHANGED = "tech-lens:config-changed";
+export function configChanged(): void {
+  window.dispatchEvent(new Event(CONFIG_CHANGED));
 }

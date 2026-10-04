@@ -1,12 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
+import BackLink from "@/components/BackLink";
+import ConfirmAction from "@/components/ConfirmAction";
+import EvidenceLine from "@/components/EvidenceLine";
+import FabricLabel from "@/components/FabricLabel";
+import Hood from "@/components/Hood";
+import PageHeader from "@/components/PageHeader";
 import StageFlow from "@/components/StageFlow";
+import StatusChip from "@/components/StatusChip";
+import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
+import { calls, resumeAssessment } from "@/lib/actions";
 import { ApiError, fetchJson, sendJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import { formatDay, formatTime, plural } from "@/lib/format";
+import { useHere, withFrom } from "@/lib/here";
+import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
+import { PRIORITY, scoreShade } from "@/lib/theme";
 
 const SCORING_STAGES = ["preparing", "scoring", "done"];
 
@@ -33,6 +45,7 @@ type Assessment = {
   extras?: Record<string, number | null>;
   placement?: Placement;
   tora_basis: string;
+  evidence_runs?: string[];
 };
 
 type Run = {
@@ -42,7 +55,7 @@ type Run = {
   stage_history?: { stage: string; at: string }[];
   progress: { techs_total: number; techs_done: number; llm_calls: number };
   technologies: { tech_id: string; name: string }[];
-  skipped?: { name: string; reason: string }[];
+  skipped?: { tech_id: string; name: string; reason: string }[];
   started_at: string;
   finished_at?: string;
   error?: string | null;
@@ -58,47 +71,26 @@ const AXES: { key: string; label: string; short: string }[] = [
 const EXTRAS: { code: string; label: string }[] = [
   { code: "X1", label: "X1 Disruption threat — outside TORA, feeds the priority grid" },
   { code: "X2", label: "X2 Serviceable capture — outside TORA, feeds the priority grid" },
-  { code: "X3", label: "X3 Capability gap — outside TORA, feeds the PoV" },
+  { code: "X3", label: "X3 Capability gap — outside TORA, feeds the Point of View" },
 ];
-
-function scoreShade(score: number | null): string {
-  if (score == null) return "bg-neutral-100 text-neutral-400";
-  if (score >= 7) return "bg-[#8a4b2d] text-white";
-  if (score >= 4) return "bg-[#dcb9a2] text-[#171513]";
-  return "bg-[#f8efe7] text-[#171513]";
-}
-
-const PRIORITY_STYLE: Record<string, { bg: string; ink: string }> = {
-  P1: { bg: "#8a4b2d", ink: "#ffffff" },
-  P2: { bg: "#a97253", ink: "#ffffff" },
-  P3: { bg: "#c49579", ink: "#171513" },
-  P4: { bg: "#dcb9a2", ink: "#171513" },
-  P5: { bg: "#eed8c8", ink: "#171513" },
-  P6: { bg: "#f8efe7", ink: "#171513" },
-};
 
 const TIMELINE_COLS = ["near", "mid", "far"] as const;
 const POTENTIAL_ROWS = ["high", "mid", "low"] as const;
-// the grid map mirrors the seeded priority_grid config
-const GRID_CELLS: Record<string, string> = {
-  near_high: "P1", near_mid: "P2", near_low: "P4",
-  mid_high: "P2", mid_mid: "P3", mid_low: "P5",
-  far_high: "P3", far_mid: "P5", far_low: "P6",
-};
 
 function PriorityChip({ p }: { p: string | null | undefined }) {
   if (!p) return <span className="font-mono text-xs text-neutral-400">—</span>;
-  const s = PRIORITY_STYLE[p] ?? { bg: "#f5f5f4", ink: "#171513" };
   return (
-    <span className="inline-block min-w-8 px-1 py-0.5 text-center font-mono text-xs"
-      style={{ background: s.bg, color: s.ink }}>
+    <span className={`inline-block min-w-8 px-1 py-0.5 text-center font-mono text-xs ${PRIORITY[p] ?? "bg-neutral-100"}`}>
       {p}
     </span>
   );
 }
 
-export default function ScoringRunPage() {
+function ScoringRun() {
   const { id } = useParams<{ id: string }>();
+  const here = useHere();
+  const pipeline = usePipeline();
+  const [resumeCalls, setResumeCalls] = useState<{ count: number; calls: number } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -107,28 +99,30 @@ export default function ScoringRunPage() {
   const [axisView, setAxisView] = useState<"priority" | "priority_by_disruptiveness">("priority");
   const [prioFilter, setPrioFilter] = useState<string | null>(null);
   const [gridMeta, setGridMeta] = useState<{
+    cells: Record<string, string>;
     timelineFrom: string[]; potentialFrom: string[]; tCuts: number[]; pCuts: number[];
   } | null>(null);
   const [sortKey, setSortKey] = useState<string>("market_potential");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
-  const [shown, setShown] = useState(50); // table pagination — big runs stay snappy
+  // table pagination — big runs stay snappy; a new filter goes back to page one
+  const [paging, setPaging] = useState({ filter: "", shown: 50 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadedOnce = useRef(false);
-  const load = useCallback(
-    () => fetchJson<Run>(`/api/scoring/runs/${id}`)
+  const load = useCallback(() => {
+    return fetchJson<Run>(`/api/scoring/runs/${id}`)
       .then((d) => { loadedOnce.current = true; setRun(d); setError(null); })
       // a poll timing out during a heavy scoring burst is not "backend down" —
       // keep showing the data we have; only surface errors before the first load
-      .catch((e) => { if (!loadedOnce.current) setError(e); }),
-    [id],
-  );
+      .catch((e) => { if (!loadedOnce.current) setError(e); });
+  }, [id]);
+  const resumeBlocked = blockedReason(pipeline, "assess");
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // config + measure names, to explain placement in this run's own terms
+  // the priority grid as configured, and measure names to explain placement
   useEffect(() => {
     Promise.all([
       fetchJson<{ config: { _id: string; [k: string]: unknown }[] }>("/api/scoring/config"),
@@ -141,6 +135,7 @@ export default function ScoringRunPage() {
         const names = (ids: unknown) =>
           ((ids as string[]) ?? []).map((i) => label.get(i) ?? i);
         setGridMeta({
+          cells: (grid["grid"] as Record<string, string>) ?? {},
           timelineFrom: names(grid["timeline_from"]),
           potentialFrom: names(grid["potential_from"]),
           tCuts: (grid["timeline_cutpoints"] as number[]) ?? [4, 7],
@@ -151,6 +146,21 @@ export default function ScoringRunPage() {
   }, []);
 
   const running = run?.status === "running" || run?.status === "terminating";
+  const stopped = run?.status === "failed" || run?.status === "terminated";
+
+  // what resuming would cost: the technologies the run hasn't assessed yet
+  const left = useMemo(() => {
+    if (!run || !stopped) return [];
+    const done = new Set([...run.assessments.map((a) => a.tech_id), ...(run.skipped ?? []).map((x) => x.tech_id)]);
+    return run.technologies.filter((t) => !done.has(t.tech_id)).map((t) => t.tech_id);
+  }, [run, stopped]);
+  useEffect(() => {
+    if (!left.length) return;
+    fetchJson<{ technologies: number; calls: number }>(`/api/scoring/preview?technologies=${left.join(",")}`)
+      .then((d) => setResumeCalls({ count: left.length, calls: d.calls }))
+      .catch(() => {});
+  }, [left]);
+
   useEffect(() => {
     if (running && !timer.current) timer.current = setInterval(load, 5000);
     if (!running && timer.current) {
@@ -204,7 +214,8 @@ export default function ScoringRunPage() {
     });
   }, [scoped, prioFilter, axisView, sortKey, sortDir]);
 
-  useEffect(() => setShown(50), [fabric, query, prioFilter]); // new filter → back to page one
+  const filterKey = `${fabric}|${query}|${prioFilter}`;
+  const shown = paging.filter === filterKey ? paging.shown : 50;
 
   function sortBy(key: string) {
     if (sortKey === key) setSortDir((d) => (d === 1 ? -1 : 1));
@@ -228,80 +239,98 @@ export default function ScoringRunPage() {
   const arrow = (key: string) => (sortKey === key ? (sortDir === -1 ? " ↓" : " ↑") : "");
 
   return (
-    <div className="max-w-5xl">
-      <p className="flex flex-wrap items-center gap-3 text-sm text-neutral-600">
-        <Link href="/admin/scoring/assessments" className="text-[var(--accent)] underline underline-offset-4">
-          back to scoring runs
-        </Link>
+    <div>
+      <BackLink fallback="/admin/scoring/assessments" />
+      <PageHeader eyebrow="Assessment run" title={run ? `Assessment run · ${formatDay(run.started_at)}` : "Assessment run"} right={<TechnicalDetailsSwitch />}
+        intro="Where each technology in this run landed, fabric by fabric, and its scores."
+        help={<>
+          <li>One row per technology and fabric. Market, Strategic and Adoption are the three headline scores
+            (0–10); X1–X3 are scored alongside; P is the priority (P1 act now to P6 just watch), H the horizon (H1
+            near to H3 far) and Docs the pages read. ◐ means some measures couldn&apos;t be scored and were left
+            out, never counted as zero.</li>
+          <li>The priority grid counts the rows in each cell: how soon it arrives across, how big the prize is
+            down. Click a cell to filter the table. Disruptiveness swaps &ldquo;how big&rdquo; for the threat to
+            Tata Communications if others move first.</li>
+          <li>Click a row for the full reasoning behind it. Filter by fabric or search by name above the grid.</li>
+          <li>Resume finishes a stopped run and keeps what&apos;s done. Recompute roll-ups redoes the averages and
+            priorities from the stored scores with the current weights and cut-points, at no model cost.</li>
+        </>}>
+        {run && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-neutral-600">
+            <StatusChip status={run.status} />
+            {running && run.stage && <span>now: {stageWord(run.stage).toLowerCase()}</span>}
+            <span>{run.progress.techs_done} of {plural(run.progress.techs_total, "technology", "technologies")} done</span>
+            <span>{plural(run.progress.llm_calls, "model call")} used</span>
+            <span>started {formatTime(run.started_at)}</span>
+            {run.finished_at && <span>finished {formatTime(run.finished_at)}</span>}
+            <Hood><span className="font-mono text-xs">run {id}</span></Hood>
+          </p>
+        )}
+      </PageHeader>
+      <p className="mt-3 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
         {run && (
           <>
-            <span className="font-mono text-xs">
-              {run.status}
-              {running && run.stage ? ` · ${run.stage}` : ""} ·{" "}
-              {run.progress.techs_done}/{run.progress.techs_total} techs ·{" "}
-              {run.progress.llm_calls} LLM calls · started {formatTime(run.started_at)}
-            </span>
             {running && (
               <button
                 onClick={() => act(`/api/scoring/runs/${id}/terminate`, "terminating")}
-                className="border border-neutral-300 px-2.5 py-1 text-xs hover:bg-neutral-100"
+                className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
               >
                 Terminate
               </button>
             )}
-            {(run.status === "failed" || run.status === "terminated") && (
-              <button
-                onClick={() => act(`/api/scoring/runs/${id}/resume`, "resumed — finishing the missing work")}
-                title="existing assessments are kept; only the missing work re-runs"
-                className="border border-neutral-300 px-2.5 py-1 text-xs hover:bg-neutral-100"
-              >
-                Resume
-              </button>
+            {stopped && (
+              <ConfirmAction label="Resume" secondary cost={resumeCalls ? calls(resumeCalls.calls) : undefined}
+                question={resumeCalls
+                  ? `Resume? About ${plural(resumeCalls.calls, "model call")} for the ${plural(resumeCalls.count, "technology", "technologies")} left. What's already assessed is kept.`
+                  : "Resume? What's already assessed is kept; only the missing work runs again."}
+                disabled={resumeBlocked}
+                onConfirm={async () => { await resumeAssessment(id); setNotice("Resumed: finishing the missing work."); load(); }} />
             )}
             {!running && run.assessments.length > 0 && (
               <button
                 onClick={() => act(`/api/scoring/runs/${id}/recompute`, "TORA recomputed with current weights")}
-                title="re-derive the TORA roll-ups from stored scores using the current measure weights — no LLM calls"
-                className="border border-neutral-300 px-2.5 py-1 text-xs hover:bg-neutral-100"
+                title="re-derive the TORA roll-ups from stored scores using the current measure weights — no model calls"
+                className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
               >
                 Recompute roll-ups
               </button>
             )}
           </>
         )}
-        {notice && <span className="font-mono text-xs text-[#7a3c1e]">{notice}</span>}
+        {notice && <span className="font-mono text-xs text-muted">{notice}</span>}
       </p>
 
       {error != null && <BackendError error={error} />}
-      {run?.error && <p className="mt-3 font-mono text-xs text-[#7a3c1e]">{run.error}</p>}
+      {run?.error && <p className="mt-3 font-mono text-xs text-failed">{run.error}</p>}
+
+      {run && run.assessments.length > 0 && <EvidenceLine assessments={run.assessments} />}
 
       {run && run.assessments.length === 0 && (run.stage_history?.length ?? 0) > 0 && (
-        <div className="mt-5 w-52 border border-neutral-200 bg-white px-5 py-4">
-          <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-            Process
-          </p>
-          <StageFlow
-            stages={SCORING_STAGES}
-            history={run.stage_history!}
-            status={run.status}
-            endTime={run.finished_at ?? null}
-          />
-        </div>
+        <Hood>
+          <div className="mt-5 w-52 rounded-card border border-line bg-white px-5 py-4">
+            <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+              Process
+            </p>
+            <StageFlow
+              stages={SCORING_STAGES}
+              history={run.stage_history!}
+              status={run.status}
+              endTime={run.finished_at ?? null}
+            />
+          </div>
+        </Hood>
       )}
 
       {run && run.assessments.length > 0 && (
         <div className="mt-5 flex flex-wrap items-center gap-2">
+          {/* "all" has no fabric colour, so it shows as the neutral pill */}
           {[["all", "All fabrics"] as [string, string], ...fabrics].map(([fid, label]) => (
             <button
               key={fid}
               onClick={() => setFabric(fid)}
-              className={`px-3 py-1.5 text-sm ${
-                fabric === fid
-                  ? "bg-[#171513] font-medium text-white"
-                  : "border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100"
-              }`}
+              className={`rounded-full ${fabric === fid ? "ring-2 ring-azure ring-offset-2" : "hover:opacity-80"}`}
             >
-              {label}
+              <FabricLabel id={fid} name={label} />
             </button>
           ))}
           <input
@@ -314,7 +343,7 @@ export default function ScoringRunPage() {
       )}
 
       {run && run.assessments.length > 0 && (
-        <div className="mt-4 flex flex-wrap items-start gap-6 border border-neutral-200 bg-white px-5 py-4">
+        <div className="mt-4 flex flex-wrap items-start gap-6 rounded-card border border-line bg-white px-5 py-4">
           <div>
             <div className="flex items-center gap-3">
               <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
@@ -322,49 +351,49 @@ export default function ScoringRunPage() {
               </span>
               {(["priority", "priority_by_disruptiveness"] as const).map((v) => (
                 <button key={v} onClick={() => { setAxisView(v); setPrioFilter(null); }}
-                  className={`px-2 py-0.5 text-xs ${
-                    axisView === v ? "bg-[#171513] text-white"
-                    : "border border-neutral-300 text-neutral-600 hover:bg-neutral-100"}`}>
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    axisView === v ? "bg-navy text-white"
+                    : "border border-line text-neutral-600 hover:bg-neutral-100"}`}>
                   {v === "priority" ? "Impact Potential" : "Disruptiveness"}
                 </button>
               ))}
             </div>
-            <table className="mt-2 border-separate" style={{ borderSpacing: 2 }}>
-              <thead>
-                <tr>
-                  <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">↓ big / soon →</th>
-                  {TIMELINE_COLS.map((c) => (
-                    <th key={c} className="pb-0.5 font-mono text-[10px] font-normal uppercase text-neutral-500">{c}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {POTENTIAL_ROWS.map((r) => (
-                  <tr key={r}>
-                    <td className="pr-2 text-right font-mono text-[10px] uppercase text-neutral-500">{r}</td>
-                    {TIMELINE_COLS.map((c) => {
-                      const p = GRID_CELLS[`${c}_${r}`];
-                      const s = PRIORITY_STYLE[p];
-                      const n = gridCounts[p] ?? 0;
-                      const active = prioFilter === p;
-                      return (
-                        <td key={c}>
-                          <button
-                            onClick={() => setPrioFilter(active ? null : p)}
-                            title={`${p} — click to ${active ? "clear the" : "filter the table to this"} cell`}
-                            className={`h-11 w-16 text-center ${active ? "ring-2 ring-[#171513]" : ""}`}
-                            style={{ background: s.bg, color: s.ink }}
-                          >
-                            <span className="block font-mono text-[10px]">{p}</span>
-                            <span className="block font-mono text-sm font-semibold tabular-nums">{n || "·"}</span>
-                          </button>
-                        </td>
-                      );
-                    })}
+            {gridMeta && (
+              <table className="mt-2 border-separate" style={{ borderSpacing: 2 }}>
+                <thead>
+                  <tr>
+                    <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">↓ big / soon →</th>
+                    {TIMELINE_COLS.map((c) => (
+                      <th key={c} className="pb-0.5 font-mono text-[10px] font-normal uppercase text-neutral-500">{c}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {POTENTIAL_ROWS.map((r) => (
+                    <tr key={r}>
+                      <td className="pr-2 text-right font-mono text-[10px] uppercase text-neutral-500">{r}</td>
+                      {TIMELINE_COLS.map((c) => {
+                        const p = gridMeta.cells[`${c}_${r}`];
+                        const n = gridCounts[p] ?? 0;
+                        const active = prioFilter === p;
+                        return (
+                          <td key={c}>
+                            <button
+                              onClick={() => setPrioFilter(active ? null : p)}
+                              title={`${p} — click to ${active ? "clear the" : "filter the table to this"} cell`}
+                              className={`h-11 w-16 text-center ${PRIORITY[p]} ${active ? "ring-2 ring-azure" : ""}`}
+                            >
+                              <span className="block font-mono text-[10px]">{p}</span>
+                              <span className="block font-mono text-sm font-semibold tabular-nums">{n || "·"}</span>
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
           <div className="min-w-64 flex-1 space-y-3 text-[13px] leading-relaxed text-neutral-600">
             <div>
@@ -412,30 +441,32 @@ export default function ScoringRunPage() {
               for that row&apos;s arithmetic.
               {prioFilter && (
                 <button onClick={() => setPrioFilter(null)}
-                  className="ml-2 border border-neutral-300 px-1.5 py-0.5 text-[11px] hover:bg-neutral-100">
+                  className="ml-2 rounded-full border border-line px-1.5 py-0.5 text-[11px] hover:bg-neutral-100">
                   clear {prioFilter}
                 </button>
               )}
             </p>
           </div>
           {(run.stage_history?.length ?? 0) > 0 && (
-            <div className="w-44 shrink-0 border-l border-neutral-100 pl-6">
-              <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                Process
-              </p>
-              <StageFlow
-                stages={SCORING_STAGES}
-                history={run.stage_history!}
-                status={run.status}
-                endTime={run.finished_at ?? null}
-              />
-            </div>
+            <Hood>
+              <div className="w-44 shrink-0 border-l border-neutral-100 pl-6">
+                <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+                  Process
+                </p>
+                <StageFlow
+                  stages={SCORING_STAGES}
+                  history={run.stage_history!}
+                  status={run.status}
+                  endTime={run.finished_at ?? null}
+                />
+              </div>
+            </Hood>
           )}
         </div>
       )}
 
       {run && (
-        <div className="mt-3 border border-neutral-200 bg-white">
+        <div className="mt-3 overflow-hidden rounded-card border border-line bg-white">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
               <col />
@@ -487,7 +518,7 @@ export default function ScoringRunPage() {
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {rows.slice(0, shown).map((a) => (
-                <Row key={a._id} a={a} runId={id} showFabric={fabric === "all"} axisView={axisView} />
+                <Row key={a._id} a={a} runId={id} showFabric={fabric === "all"} axisView={axisView} here={here} />
               ))}
               {rows.length === 0 && (
                 <tr>
@@ -505,8 +536,8 @@ export default function ScoringRunPage() {
           {rows.length > shown && (
             <div className="border-t border-neutral-100 px-4 py-2.5">
               <button
-                onClick={() => setShown((n) => n + 50)}
-                className="border border-neutral-300 bg-white px-3 py-1.5 text-sm hover:bg-neutral-100"
+                onClick={() => setPaging({ filter: filterKey, shown: shown + 50 })}
+                className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100"
               >
                 Show more ({shown} of {rows.length})
               </button>
@@ -517,7 +548,7 @@ export default function ScoringRunPage() {
 
       {run && run.assessments.length > 0 && (
         <p className="mt-2 font-mono text-[11px] text-neutral-500">
-          <span className="text-amber-700">◦</span> partial — this average is
+          <span className="text-muted">◐</span> partial — this average is
           built from fewer measures, because the unscorable ones are dropped
           rather than counted as zero (hover any score for the counts).
           A score shown as &ldquo;—&rdquo; is one the evidence could not support.
@@ -525,7 +556,7 @@ export default function ScoringRunPage() {
       )}
 
       {(run?.skipped?.length ?? 0) > 0 && (
-        <div className="mt-3 border border-neutral-200 bg-white px-5 py-3 text-sm text-neutral-600">
+        <div className="mt-3 rounded-card border border-line bg-white px-5 py-3 text-sm text-neutral-600">
           <span className="font-mono text-[11px] uppercase text-neutral-500">skipped: </span>
           {run!.skipped!.map((s) => `${s.name} (${s.reason})`).join("; ")}
         </div>
@@ -541,10 +572,10 @@ function Marker({ on, title }: { on: boolean; title?: string }) {
     <span
       title={on ? title : undefined}
       className={`relative -top-1 ml-0.5 inline-block w-2 text-center font-mono text-[10px] ${
-        on ? "text-amber-700" : "text-transparent"
+        on ? "text-muted" : "text-transparent"
       }`}
     >
-      ◦
+      ◐
     </span>
   );
 }
@@ -571,16 +602,18 @@ function placementTitle(a: Assessment): string {
   return parts.join(". ");
 }
 
-function Row({ a, runId, showFabric, axisView }: {
+function Row({ a, runId, showFabric, axisView, here }: {
   a: Assessment; runId: string; showFabric: boolean;
-  axisView: "priority" | "priority_by_disruptiveness";
+  axisView: "priority" | "priority_by_disruptiveness"; here: string;
 }) {
-  const href = `/admin/scoring/assessments/${runId}/${encodeURIComponent(a._id)}`;
+  const router = useRouter();
+  const href = withFrom(`/admin/scoring/assessments/${runId}/${encodeURIComponent(a._id)}`, here);
   return (
-    <tr className="cursor-pointer hover:bg-neutral-50"
-      onClick={() => (window.location.href = href)}>
+    <tr className="cursor-pointer hover:bg-neutral-50" title="Open this assessment's details"
+      onClick={() => router.push(href)}>
       <td className="truncate px-4 py-2 font-medium">
-        <Link href={href} onClick={(e) => e.stopPropagation()} className="hover:underline">
+        <Link href={withFrom(`/admin/technologies/${a.tech_id}`, here)} onClick={(e) => e.stopPropagation()}
+          className="hover:underline" title="Open the technology">
           {a.technology}
         </Link>
       </td>
@@ -631,5 +664,13 @@ function Row({ a, runId, showFabric, axisView }: {
         {a.doc_count}
       </td>
     </tr>
+  );
+}
+
+export default function ScoringRunPage() {
+  return (
+    <Suspense fallback={null}>
+      <ScoringRun />
+    </Suspense>
   );
 }

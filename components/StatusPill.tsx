@@ -19,6 +19,8 @@ function running(p: Pipeline): string[] {
   if (check?.status === "running")
     out.push(check.stage === "organizing technologies" ? organizing : `Checking pages · ${check.done} of ${check.total}`);
   if (p.technologies.resolve_status === "running" && !out.includes(organizing)) out.push(organizing);
+  if (p.classify?.status === "running")
+    out.push(`Classifying · ${p.classify.done ?? 0} of ${plural(p.classify.total ?? 0, "technology", "technologies")}`);
   if (isLive(assess.status))
     out.push(`Assessing · ${assess.techs_done ?? 0} of ${plural(assess.techs_total ?? 0, "technology", "technologies")}`);
   if (writing?.status === "running") out.push(`Writing Points of View · ${writing.done} of ${writing.total}`);

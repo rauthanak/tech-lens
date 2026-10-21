@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
-import PageHelp from "@/components/PageHelp";
+import Hood from "@/components/Hood";
+import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
-import { AXIS_LABELS, Measure, OpenQuestionBadge } from "@/lib/scoring";
+import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { useHood } from "@/lib/hood";
+import { AXIS_LABELS, Measure, OpenQuestionBadge, weightShare } from "@/lib/scoring";
 import { PRIORITY } from "@/lib/theme";
 
 type ConfigDoc = {
@@ -27,8 +30,8 @@ export default function ConfigPage() {
   const [docs, setDocs] = useState<ConfigDoc[] | null>(null);
   const [measures, setMeasures] = useState<Measure[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  // the last save, shown in the section it was made in: which setting, and its error if it failed
+  const [result, setResult] = useState<{ name: string; what: string; error: string | null } | null>(null);
 
   const load = () =>
     Promise.all([
@@ -45,21 +48,30 @@ export default function ConfigPage() {
     load();
   }, []);
 
-  async function patch(name: string, changes: Record<string, unknown>) {
-    setNotice(null);
-    setSaved(false);
+  // `what`: what the save means, said beside it
+  async function patch(name: string, changes: Record<string, unknown>, what = "Applies from the next assessment run.") {
+    setResult(null);
     try {
       await sendJson(`/api/scoring/config/${name}`, "PUT", changes);
-      setSaved(true);
+      setResult({ name, what, error: null });
       configChanged();
       load();
     } catch (e) {
-      setNotice(`save failed: ${e instanceof ApiError ? (e.detail ?? e.message) : e}`);
+      setResult({ name, what, error: errorText(e) });
     }
   }
+  // what the last save in a section did, shown in that section
+  const resultIn = (name: string) => result?.name === name && (
+    <p className="mt-2">
+      {result.error ? <span className="text-sm text-failed">Not saved: {result.error}</span>
+        : <SavedNote show what={result.what} />}
+    </p>
+  );
+  const settled = "The current values stand as the decision.";
 
   const grid = docs?.find((d) => d._id === "priority_grid");
   const evidence = docs?.find((d) => d._id === "evidence");
+  const engineDoc = docs?.find((d) => d._id === "engine");
   const tora = docs?.find((d) => d._id === "tora");
   const byId = new Map((measures ?? []).map((m) => [m._id, m]));
   const measureName = (slug: string) => byId.get(slug)?.name ?? slug;
@@ -67,37 +79,36 @@ export default function ConfigPage() {
   return (
     <div className="space-y-7">
       <div>
-        <p className="max-w-4xl text-sm text-neutral-600">
-          The arithmetic that turns the twelve scores into the TORA numbers and a priority, with no model calls.
-        </p>
-        <PageHelp>
-          <li>TORA roll-up: each of the three numbers is the weighted average of its measures. Weights are edited on
-            the Measures tab.</li>
+        <PageHeader title="Weights and grid" right={<TechnicalDetailsSwitch />}
+          intro="The arithmetic that turns the twelve scores into the three scores and a priority, with no model calls."
+          help={<>
+          <li>The three scores (Market Potential, Strategic Fit, Adoption Readiness): each is the weighted average
+            of its measures. Weights are edited on the Measures tab. Technical details adds the measures&apos;
+            codes.</li>
           <li>Priority grid: how soon it arrives (Maturity and Commercial adoption) crossed with how big the prize is
             (Addressable market, Growth, Disruption threat, Serviceable capture). Darker cells are more urgent, from
             P1 act now to P6 just watch.</li>
           <li>Cut-points split each 0–10 score into three bands: &ldquo;4, 7&rdquo; means below 4, 4 to 7, and above
             7. Raise them and fewer technologies reach P1.</li>
-          <li>Grid changes apply to new assessment runs, and Recompute on a run&apos;s page applies them to its
-            results, at no model cost. The evidence ceiling affects new runs only.</li>
-        </PageHelp>
+          <li>Grid changes apply to new assessment runs, and Redo scores on a run&apos;s page applies them to its
+            results, at no model cost. The evidence limit affects new runs only.</li>
+          </>} />
       </div>
 
       {error != null && <BackendError error={error} />}
-      {notice && <p className="text-xs text-failed">{notice}</p>}
-      <SavedNote show={saved} />
 
-      <FlowStrip />
+      <FlowStrip soon={((grid?.timeline_from as string[]) ?? []).map(measureName)}
+        big={((grid?.potential_from as string[]) ?? []).map(measureName)} />
 
       {tora && measures && (
         <section className="rounded-card border border-line bg-white px-5 py-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">TORA roll-up</h2>
+            <h2 className="font-semibold">The three scores</h2>
             <OpenQuestionBadge question={tora.open_question} />
           </div>
           <p className="mt-1.5 text-sm text-neutral-600">
-            Nine measures roll into the three TORA numbers as weighted
-            averages; three are scored alongside and never averaged in.
+            Nine measures roll into the three scores as weighted
+            averages; three more are scored but never averaged in.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {TORA_AXES.map((axis) => (
@@ -109,12 +120,16 @@ export default function ConfigPage() {
             ))}
             <ExtraColumn
               rows={measures.filter((m) => m.axis === "extra").sort((a, b) => a.code.localeCompare(b.code))}
+              inGrid={(grid?.potential_from as string[]) ?? []}
             />
           </div>
           <p className="mt-4 border-t border-neutral-100 pt-3 text-sm text-neutral-600">
-            {String(tora.unscorable_policy ?? "")}
+            A measure the evidence can&apos;t support is left out of its score, which is then marked partial; it&apos;s
+            never counted as zero.
+            <Hood><span className="mt-1 block font-mono text-xs text-neutral-500">{String(tora.unscorable_policy ?? "")}</span></Hood>
           </p>
-          <OpenQuestionRow doc={tora} onClear={() => patch("tora", { open_question: null })} />
+          <OpenQuestionRow doc={tora} onClear={() => patch("tora", { open_question: null }, settled)} />
+          {resultIn("tora")}
         </section>
       )}
 
@@ -129,25 +144,53 @@ export default function ConfigPage() {
             <em>How soon</em> (from {(grid.timeline_from as string[])?.map(measureName).join(" + ")})
             crossed with <em>how big</em> (from{" "}
             {(grid.potential_from as string[])?.map(measureName).join(", ")}). The
-            cut-points slice each 0–10 score into three bands; the cell is the
-            recommended posture. Both grid views — Impact Potential and
-            Disruptiveness — are always produced.
+            cut-points slice each 0–10 score into three bands; the cell gives the priority.
           </p>
           <PriorityGridTable grid={grid} />
-          <OpenQuestionRow doc={grid} onClear={() => patch("priority_grid", { open_question: null })} />
-          <GridCutpoints grid={grid} onSave={(changes) => patch("priority_grid", changes)} />
+          <OpenQuestionRow doc={grid} onClear={() => patch("priority_grid", { open_question: null }, settled)} />
+          <GridCutpoints grid={grid} onSave={(changes) => patch("priority_grid", changes, "Applies to new assessment runs.")} />
+          {resultIn("priority_grid")}
         </section>
       )}
 
       {evidence && (
         <section className="rounded-card border border-line bg-white px-5 py-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Evidence dossier ceiling</h2>
+            <h2 className="font-semibold">Most evidence sent per technology</h2>
             <OpenQuestionBadge question={evidence.open_question} />
           </div>
-          <p className="mt-1.5 text-sm text-neutral-600">{String(evidence.note ?? "")}</p>
-          <OpenQuestionRow doc={evidence} onClear={() => patch("evidence", { open_question: null })} />
+          <p className="mt-1.5 text-sm text-neutral-600">
+            A safety limit only: every page summary of a technology is sent, and the oldest are left out only when
+            they&apos;d pass this many tokens.
+            <Hood><span className="mt-1 block font-mono text-xs text-neutral-500">{String(evidence.note ?? "")}</span></Hood>
+          </p>
+          <OpenQuestionRow doc={evidence} onClear={() => patch("evidence", { open_question: null }, settled)} />
           <TokenCeiling value={Number(evidence.max_dossier_tokens)} onSave={(v) => patch("evidence", { max_dossier_tokens: v })} />
+          {resultIn("evidence")}
+        </section>
+      )}
+
+      {engineDoc && (
+        <section className="rounded-card border border-line bg-white px-5 py-4">
+          <h2 className="font-semibold">How an assessment calls the model</h2>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="How an assessment calls the model">
+            {([["stacked", "Combined calls (recommended)", "One call per technology (which fabrics to assess, the measures judged for the technology as a whole, the metrics to watch), then one per fabric it touches. Its evidence is sent once and reused: about 1 call per technology, plus one per fabric."],
+              ["per_measure", "One call per measure (older)", "One call per measure in each fabric, plus the fabric choice and the metrics to watch, each sending the full evidence: about 30 per technology."]] as const)
+              .map(([mode, label, text]) => {
+                const on = (engineDoc.mode ?? "per_measure") === mode;
+                return (
+                  <button key={mode} type="button" role="radio" aria-checked={on} onClick={() => !on && patch("engine", { mode })}
+                    className={`rounded-lg border px-3.5 py-2.5 text-left ${on ? "border-navy bg-navy/[0.04]" : "border-line hover:bg-ground"}`}>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <span className={`h-3 w-3 rounded-full border ${on ? "border-navy bg-navy" : "border-neutral-400"}`} />{label}
+                    </div>
+                    <p className="mt-1 text-xs text-neutral-600">{text}</p>
+                  </button>
+                );
+              })}
+          </div>
+          <p className="mt-2 text-xs text-neutral-500">Clicking a choice saves it. It applies from the next assessment run; the estimate before a run uses it.</p>
+          {resultIn("engine")}
         </section>
       )}
       </div>
@@ -177,7 +220,7 @@ function FlowArrow() {
   );
 }
 
-function FlowStrip() {
+function FlowStrip({ soon, big }: { soon: string[]; big: string[] }) {
   return (
     <section className="rounded-card border border-line bg-white px-5 py-4">
       <h2 className="font-semibold">How it fits together</h2>
@@ -190,31 +233,32 @@ function FlowStrip() {
         <div className="flex flex-1 flex-col gap-2">
           <FlowBox
             accent
-            title="2a · TORA — the assessment"
-            body="M, S and A scores are weighted-averaged into the three headline numbers: how big, how well it fits, how ready."
+            title="2a · The three scores, the assessment"
+            body="The Market, Strategic and Adoption measures are weighted-averaged into the three headline numbers: how big, how well it fits, how ready."
           />
           <FlowBox
             accent
             title="2b · Priority grid — the recommendation"
-            body="A1 + A2 say how soon it arrives; M1, M2, X1, X2 say how big the prize is; the cell they land in says what to do (P1–P6)."
+            body={`${soon.join(" and ") || "Some measures"} say how soon it arrives; ${big.join(", ") || "others"} say how big the prize is; the cell they land in says what to do (P1–P6).`}
           />
         </div>
         <FlowArrow />
         <FlowBox
           title="3 · Point of View"
-          body="The Point of View shows both: the three TORA numbers as the verdict, the priority as the action, plus X3 (capability gap) as the caveat."
+          body="The Point of View shows both: the three scores as the verdict, the priority as the action, plus the capability gap as the caveat."
         />
       </div>
       <p className="mt-3 text-[13px] text-neutral-500">
-        The same twelve scores feed both branches — the grid never reads the TORA
-        numbers, it goes back to the individual measures. So a weight (on the Measures
-        tab) changes TORA; a cut-point changes only the priority.
+        The same twelve scores feed both branches: the grid never reads the three
+        scores, it goes back to the individual measures. So a weight (on the Measures
+        tab) changes the three scores; a cut-point changes only the priority.
       </p>
     </section>
   );
 }
 
 function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
+  const hood = useHood();
   const total = rows.reduce((s, m) => s + (m.weight ?? 0), 0);
   return (
     <div className="border border-neutral-200 px-4 py-3.5">
@@ -224,10 +268,10 @@ function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
           <div key={m._id}>
             <div className="flex items-baseline justify-between gap-2 text-sm">
               <span className="min-w-0 truncate">
-                <span className="font-mono text-xs text-neutral-500">{m.code}</span> {m.name}
+                {hood && <span className="font-mono text-xs text-neutral-500">{m.code} </span>}{m.name}
               </span>
               <span className="shrink-0 font-mono text-xs tabular-nums text-neutral-600">
-                × {m.weight ?? 0}
+                {weightShare(m.weight ?? 0)}
               </span>
             </div>
             <div className="mt-1 h-1 bg-neutral-100">
@@ -236,9 +280,11 @@ function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
           </div>
         ))}
       </div>
-      <p className="mt-3 border-t border-neutral-100 pt-2 font-mono text-[11px] text-neutral-500">
-        = {rows.map((m) => `${m.weight ?? 0}·${m.code}`).join(" + ")}
-      </p>
+      <Hood>
+        <p className="mt-3 border-t border-neutral-100 pt-2 font-mono text-[11px] text-neutral-500">
+          = {rows.map((m) => `${m.weight ?? 0}·${m.code}`).join(" + ")}
+        </p>
+      </Hood>
       {Math.abs(total - 1) > 1e-9 && (
         <p className="mt-1 font-mono text-[11px]">weights sum to {total.toFixed(2)} — should be 1.0</p>
       )}
@@ -246,19 +292,23 @@ function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
   );
 }
 
-function ExtraColumn({ rows }: { rows: Measure[] }) {
+function ExtraColumn({ rows, inGrid }: { rows: Measure[]; inGrid: string[] }) {
+  const hood = useHood();
+  const grid = rows.filter((m) => inGrid.includes(m._id)).map((m) => m.name);
+  const rest = rows.filter((m) => !inGrid.includes(m._id)).map((m) => m.name);
   return (
     <div className="border border-dashed border-neutral-300 bg-neutral-50 px-4 py-3.5">
-      <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">Outside TORA</div>
+      <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">{AXIS_LABELS.extra}</div>
       <div className="mt-2.5 space-y-2 text-sm">
         {rows.map((m) => (
           <div key={m._id} className="text-neutral-600">
-            <span className="font-mono text-xs text-neutral-500">{m.code}</span> {m.name}
+            {hood && <span className="font-mono text-xs text-neutral-500">{m.code} </span>}{m.name}
           </div>
         ))}
       </div>
       <p className="mt-3 border-t border-neutral-200 pt-2 text-[11px] leading-snug text-neutral-500">
-        Not rolled up: X1 and X2 feed the priority grid, X3 the Point of View.
+        Not averaged in{grid.length > 0 && `: ${grid.join(" and ")} feed the priority grid`}
+        {rest.length > 0 && `${grid.length ? "; " : ": "}${rest.join(" and ")} the Point of View`}.
       </p>
     </div>
   );
@@ -284,7 +334,7 @@ function PriorityGridTable({ grid }: { grid: ConfigDoc }) {
         <thead>
           <tr>
             <th className="pr-2 text-right align-bottom font-mono text-[11px] font-normal uppercase tracking-wider text-neutral-500">
-              how big ↓
+              How big ↓ · How soon →
             </th>
             {TIMELINE_COLS.map((c) => (
               <th key={c} className="pb-1 font-mono text-[11px] font-normal uppercase tracking-wider text-neutral-500">
@@ -326,9 +376,9 @@ function OpenQuestionRow({ doc, onClear }: { doc: ConfigDoc; onClear: () => void
       <button
         onClick={onClear}
         className="ml-1 rounded-full border border-line bg-white px-2 py-0.5 text-xs hover:bg-neutral-100"
-        title="Clear the open question — the current values stand as the decision"
+        title="Clear the open question: the current values stand as the decision"
       >
-        mark settled
+        Mark as settled (keep these values)
       </button>
     </p>
   );
@@ -349,11 +399,11 @@ function GridCutpoints({ grid, onSave }: { grid: ConfigDoc; onSave: (c: Record<s
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-4">
         <label className="text-sm">
-          Timeline cut-points
+          How soon cut-points
           <input className={`${field} block w-36`} value={timeline} onChange={(e) => setTimeline(e.target.value)} />
         </label>
         <label className="text-sm">
-          Potential cut-points
+          How big cut-points
           <input className={`${field} block w-36`} value={potential} onChange={(e) => setPotential(e.target.value)} />
         </label>
         <button
@@ -367,23 +417,29 @@ function GridCutpoints({ grid, onSave }: { grid: ConfigDoc; onSave: (c: Record<s
         >
           Save cut-points
         </button>
-        <span className="pb-2 text-xs text-neutral-500">saving redraws the band edges above</span>
+        <span className="pb-2 text-xs text-neutral-500">Applies to new assessment runs. To apply it to a past run, use
+          &lsquo;Redo scores&rsquo; on that run&apos;s page.</span>
       </div>
     </div>
   );
 }
 
 function TokenCeiling({ value, onSave }: { value: number; onSave: (v: number) => void }) {
-  const [v, setV] = useState(String(value));
+  // shown with thousands commas; the commas are dropped before saving
+  const [v, setV] = useState(value.toLocaleString());
+  const n = Number(v.replace(/[,\s]/g, ""));
+  const valid = Number.isFinite(n) && n > 0;
   return (
-    <div className="mt-3 flex items-end gap-4">
+    <div className="mt-3 flex flex-wrap items-end gap-4">
       <label className="text-sm">
-        Max dossier tokens
-        <input className={`${field} block w-36`} type="number" value={v} onChange={(e) => setV(e.target.value)} />
+        Limit, in tokens{valid && ` (about ${Math.round(n * 0.75).toLocaleString()} words)`}
+        <input className={`${field} block w-36`} inputMode="numeric" value={v} onChange={(e) => setV(e.target.value)} />
       </label>
-      <button onClick={() => onSave(Number(v))} className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100">
-        Save
+      <button onClick={() => onSave(n)} disabled={!valid}
+        className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50">
+        Save the limit
       </button>
+      {!valid && <span className="pb-2 text-xs text-failed">Enter a whole number of tokens, such as 500,000.</span>}
     </div>
   );
 }

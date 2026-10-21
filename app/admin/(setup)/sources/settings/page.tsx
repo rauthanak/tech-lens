@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import ListEditor from "@/components/ListEditor";
 import PageHeader from "@/components/PageHeader";
+import RadarSettings from "@/components/RadarSettings";
 import SavedNote from "@/components/SavedNote";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 
 type CrawlSettings = {
   skip_url_patterns: string[];
@@ -18,7 +19,7 @@ type CrawlSettings = {
 const field =
   "mt-1 w-40 rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
 
-export default function CrawlSettingsPage() {
+export default function SettingsPage() {
   const [form, setForm] = useState<CrawlSettings | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -46,7 +47,7 @@ export default function CrawlSettingsPage() {
       setSaved(true);
       configChanged();
     } catch (e) {
-      setSaveError(e instanceof ApiError ? (e.detail ?? e.message) : "save failed");
+      setSaveError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -57,9 +58,12 @@ export default function CrawlSettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Crawl settings"
-        intro="Limits for every collection: how far the crawler goes and how long pages are read."
+      <PageHeader title="Settings"
+        intro="Limits for collecting pages, for judging each technology's evidence and for Find evidence, and the time zone used by default."
         help={<>
+          <li>Collecting pages: how far the crawler goes in every collection and how long pages are read. Judging
+            technologies, finding evidence, time zone: the radar&apos;s own limits, below. Each part has its own Save
+            button.</li>
           <li>Links the crawler never follows: a link is skipped when its address contains any of these. Images,
             scripts and other files are always skipped.</li>
           <li>Page budget per source: the most pages one collection takes from each website, and from each data
@@ -76,6 +80,7 @@ export default function CrawlSettingsPage() {
 
       {form && (
         <form className="mt-7 space-y-6" onSubmit={(e) => { e.preventDefault(); save(); }}>
+          <h2 className="text-lg font-semibold">Collecting pages</h2>
           {/* two columns on wide screens: the skipped links, then the limits */}
           <div className="grid grid-cols-1 items-start gap-x-10 gap-y-6 lg:grid-cols-2">
             <div>
@@ -125,10 +130,11 @@ export default function CrawlSettingsPage() {
           <SavedNote show={saved} />
           <button type="submit" disabled={saving}
             className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong disabled:opacity-50">
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save collection settings"}
           </button>
         </form>
       )}
+      <RadarSettings />
     </div>
   );
 }

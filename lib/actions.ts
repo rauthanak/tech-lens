@@ -52,3 +52,11 @@ export async function organizeTechnologies(): Promise<void> {
   await sendJson("/api/technologies/resolve", "POST", {});
   await refreshPipeline();
 }
+
+/** Classify technologies: these, or every one with new pages. */
+export async function startClassify(techIds: string[] | null): Promise<string> {
+  const run = await sendJson<{ run_id: string }>("/api/classify", "POST",
+    techIds ? { tech_ids: techIds } : { all_pending: true });
+  await refreshPipeline();
+  return run.run_id;
+}

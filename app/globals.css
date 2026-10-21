@@ -91,6 +91,25 @@
    pages (at least 3 lines either side of a break) and headings stay with it;
    small blocks (a card, a metric, a table row) carry break-inside-avoid in
    the page itself, so no page is left half empty. */
+/* a page that prints on one landscape sheet (Where each skill is used) */
+@page landscape-sheet {
+  size: A4 landscape;
+  margin: 10mm;
+}
+.print-landscape {
+  page: landscape-sheet;
+}
+
+/* A side panel (the Point of View's Why) pushes the page's content left on wide screens instead of covering it */
+@media (min-width: 1280px) {
+  main {
+    transition: padding-right 0.2s ease;
+  }
+  body.side-panel main {
+    padding-right: calc(min(34rem, 40vw) + 1.5rem);
+  }
+}
+
 @media print {
   * {
     -webkit-print-color-adjust: exact;

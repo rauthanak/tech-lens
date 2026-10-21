@@ -2,12 +2,23 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import SavedNote from "@/components/SavedNote";
-import { PROMPT_IMPACT, PromptDoc, UNKNOWN_IMPACT } from "@/lib/prompts";
+import SkillPreview from "@/components/SkillPreview";
+import StackedPreview from "@/components/StackedPreview";
+import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
+import { formatAt, formatDay, plural } from "@/lib/format";
+import { useHood } from "@/lib/hood";
+import { PROMPT_IMPACT, PromptDoc, type SkillMap, skillTitle, STAGE_MEANING, tokensUsed, UNKNOWN_IMPACT } from "@/lib/prompts";
+
+// a step's runs, named as the reader knows them
+const RUN_NOUN: Record<string, string> = { collect: "collection", organise: "Organize run", classify: "Classify run",
+  assess: "assessment run", pov: "Points of View run" };
+
+const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n.toLocaleString()} times`);
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -20,6 +31,32 @@ export default function PromptDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [recipes, setRecipes] = useState<{ _id: string; name: string; skills: string[] }[]>([]);
+  const [sent, setSent] = useState<string>("alone"); // how it's shown: on its own, or inside a recipe's combined call
+  useEffect(() => {
+    fetchJson<{ recipes: { _id: string; name: string; skills: string[] }[] }>("/api/recipes")
+      .then((d) => setRecipes(d.recipes.filter((r) => r.skills.includes(name))))
+      .catch(() => {});
+  }, [name]);
+  const [map, setMap] = useState<SkillMap | null>(null);
+  const hood = useHood();
+
+  // what it used in each step's last full run, one line per step: inside the
+  // combined calls that carry it, and on its own; tokens under Technical details
+  useEffect(() => {
+    fetchJson<SkillMap>("/api/skills/map").then(setMap).catch(() => {});
+  }, [name]);
+  const used = (map?.stages ?? []).flatMap((st) => {
+    if (!st.run) return [];
+    const inside = st.recipes.filter((r) => r.skills.includes(name) && r.used);
+    const alone = st.skills.find((k) => k.name === name)?.alone ?? inside.map((r) => r.alone[name]).find(Boolean) ?? null;
+    if (!inside.length && !alone) return [];
+    const parts = [
+      ...inside.map((r) => `inside ${plural(r.used!.calls, r.name.toLowerCase())}${hood ? ` (${tokensUsed(r.used!)}, the whole call's)` : ""}`),
+      ...(alone ? [`${inside.length ? `${times(alone.calls)} on its own` : plural(alone.calls, "call")}${hood ? ` (${tokensUsed(alone)})` : ""}`] : []),
+    ];
+    return [`Last full ${RUN_NOUN[st.id] ?? st.name}, ${formatDay(st.run.at)}: ${parts.join(", and ")}`];
+  });
 
   const load = () =>
     fetchJson<{ prompts: PromptDoc[] }>("/api/prompts")
@@ -46,12 +83,13 @@ export default function PromptDetailPage() {
         system: draft.system || null,
         prompt: draft.prompt,
         enabled: draft.enabled,
+        reasoning: draft.reasoning ?? "off",
       });
       setSaved(true);
       configChanged();
       load();
     } catch (e) {
-      setSaveError(e instanceof ApiError ? (e.detail ?? e.message) : "save failed");
+      setSaveError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -61,21 +99,34 @@ export default function PromptDetailPage() {
   const dirty =
     doc && draft &&
     (doc.description !== draft.description || (doc.system ?? "") !== (draft.system ?? "") ||
-      doc.prompt !== draft.prompt || doc.enabled !== draft.enabled);
+      doc.prompt !== draft.prompt || doc.enabled !== draft.enabled ||
+      (doc.reasoning ?? "off") !== (draft.reasoning ?? "off"));
+  // unsaved skill text: What it turns into is rebuilt from it
+  const textDraft =
+    doc && draft && ((doc.system ?? "") !== (draft.system ?? "") || doc.prompt !== draft.prompt)
+      ? { system: draft.system || null, prompt: draft.prompt }
+      : null;
 
   return (
     <div>
-      <PageHeader eyebrow="Skill" title={name}
+      <PageHeader eyebrow="Skill" title={doc?.title || skillTitle(name)} right={<TechnicalDetailsSwitch />}
         intro="One instruction the models follow. The step uses the new text the next time it runs."
         help={<>
-          <li>Skill text is what the model receives, after the optional System text. Words in {"{single braces}"}
-            are filled in when it runs; literal braces stay doubled: {"{{ }}"}.</li>
-          <li>Where it acts says which step uses it, when it fires and what an edit changes.</li>
+          <li>Skill text is what the model receives, after the optional instructions sent first. Words in{" "}
+            {"{single braces}"} are filled in when it runs; literal braces stay doubled: {"{{ }}"}.</li>
+          <li>Where it acts says which step uses it, when it runs and what an edit changes. Technical details adds
+            the skill&apos;s code name, the one the code reads it by, its version and the tokens it used.</li>
           <li>Saving costs no model calls and lists the edit in Changes; Discard changes puts back the saved
             text. Switching a skill off makes its step fail or be skipped when it runs.</li>
+          <li>What it turns into, below the card, shows how many versions of this skill a run sends, where
+            each blank is filled from, and a real example built from today&apos;s settings. It costs no model
+            calls, and while you have unsaved edits it shows what your edit would send.</li>
         </>}>
         <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
-          {doc && <span className="font-mono text-xs text-neutral-500">v{doc.version}</span>}
+          {hood && doc && <span className="text-xs text-neutral-500">Version {doc.version}</span>}
+          {hood && <span className="font-mono text-xs text-neutral-500">{name}</span>}
+          {used.map((u) => <span key={u} className="text-xs text-neutral-500">{u}</span>)}
+          <Link href="/admin/prompts/map" className="text-link underline underline-offset-4">where each skill is used</Link>
           <Link href="/admin/prompts" className="text-link underline underline-offset-4">
             back to skills
           </Link>
@@ -99,11 +150,11 @@ export default function PromptDetailPage() {
           >
             <div>
               <label className="block text-sm font-medium">Description</label>
-              <input className={field} value={draft.description}
+              <textarea className={field} rows={2} value={draft.description}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })} required />
             </div>
             <div>
-              <label className="block text-sm font-medium">System</label>
+              <label className="block text-sm font-medium">Instructions sent first (optional)</label>
               <textarea className={`${field} min-h-24 font-mono text-[13px] leading-relaxed`}
                 value={draft.system ?? ""}
                 placeholder="optional — put before the skill text, with a blank line"
@@ -123,7 +174,19 @@ export default function PromptDetailPage() {
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={draft.enabled}
                 onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
-              Enabled — a switched-off skill makes its step fail when it runs
+              Switched on: a switched-off skill makes its step fail or be skipped when it runs
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={draft.reasoning === "on"}
+                onChange={(e) => setDraft({ ...draft, reasoning: e.target.checked ? "on" : "off" })} />
+              <span>
+                Let the model reason before it answers
+                <span className="block text-xs text-neutral-500">
+                  Better judgment on hard calls, such as scoring and Points of View. Its reasoning isn&apos;t shown but
+                  is paid for as written tokens, often several times the answer, and calls take longer. A call that
+                  carries several skills reasons when any of them asks to.
+                </span>
+              </span>
             </label>
             {saveError && <p className="text-sm text-failed">Save failed: {saveError}</p>}
             <SavedNote show={saved && !dirty} />
@@ -154,18 +217,19 @@ export default function PromptDetailPage() {
             </div>
             <div className="mt-2 space-y-3 text-sm">
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Stage</div>
+                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Step</div>
                 <p className="mt-0.5">
                   {impact.stage}
-                  {!impact.live && " — not wired in yet"}
+                  {STAGE_MEANING[impact.stage] && <span className="text-neutral-500">: {STAGE_MEANING[impact.stage]}</span>}
                 </p>
               </div>
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Used by</div>
+                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Used in</div>
                 <p className="mt-0.5">{impact.usedBy}</p>
+                {hood && impact.code && <p className="mt-0.5 font-mono text-xs text-neutral-500">{impact.code}</p>}
               </div>
               <div>
-                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Fires</div>
+                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Runs</div>
                 <p className="mt-0.5">{impact.when}</p>
               </div>
               <div className="border-l-2 border-navy/30 pl-3">
@@ -174,29 +238,38 @@ export default function PromptDetailPage() {
                 </div>
                 <p className="mt-1 leading-relaxed text-neutral-700">{impact.impacts}</p>
               </div>
-              <div>
-                <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-400">Variables</div>
-                {draft.variables.length > 0 ? (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {draft.variables.map((v) => (
-                      <span key={v}
-                        className="rounded-full bg-navy/5 px-2 py-0.5 font-mono text-[11px] text-ink">
-                        {"{" + v + "}"}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-0.5 text-neutral-500">none — the text is used as-is</p>
-                )}
-              </div>
               {doc?.updated_at && (
                 <p className="font-mono text-[11px] text-neutral-400">
-                  last saved {doc.updated_at.slice(0, 19).replace("T", " ")} UTC
+                  last saved {formatAt(doc.updated_at)}
                 </p>
               )}
             </div>
           </div>
         </div>
+      )}
+
+      {doc && recipes.length > 0 && (
+        <div className="mt-8 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Show it">
+          <span className="mr-1 text-sm font-medium">Show it</span>
+          {[{ id: "alone", label: "On its own" }, ...recipes.map((r) => ({ id: r._id, label: `Inside the ${r.name.toLowerCase()}` }))]
+            .map((o) => (
+              <button key={o.id} type="button" role="radio" aria-checked={sent === o.id} onClick={() => setSent(o.id)}
+                className={`rounded-full border px-3 py-1 text-[13px] ${sent === o.id ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground"}`}>
+                {o.label}
+              </button>
+            ))}
+          <span className="basis-full text-xs text-neutral-500">
+            {recipes.length === 1 ? "Its step sends" : "Each of these steps sends"} this skill inside one call with
+            other skills; it&apos;s sent on its own only when that call&apos;s reply left its task out and it&apos;s
+            asked again alone.
+          </span>
+        </div>
+      )}
+      {doc && sent !== "alone" && <StackedPreview recipe={sent} skill={name} />}
+      {doc && sent === "alone" && (
+        <Suspense fallback={null}>
+          <SkillPreview name={name} draft={textDraft} />
+        </Suspense>
       )}
     </div>
   );

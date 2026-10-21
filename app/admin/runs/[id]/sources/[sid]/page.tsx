@@ -10,7 +10,7 @@ import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { fetchJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import { formatAt, formatDay } from "@/lib/format";
 import type { AnalysisError, Hit } from "@/lib/signals";
 
 type Doc = {
@@ -44,6 +44,7 @@ function failureText(e: AnalysisError): string {
 
 type Run = {
   id: string;
+  run_start_date_time?: string;
   sources: { source_id: string; source_name: string; source_url: string; category: string }[];
 };
 
@@ -94,7 +95,7 @@ function RunSourcePage() {
 
   return (
     <div>
-      <PageHeader eyebrow={`Collection ${id}`} title={source?.source_name ?? sid} right={<TechnicalDetailsSwitch />}
+      <PageHeader eyebrow={run?.run_start_date_time ? `Collection of ${formatDay(run.run_start_date_time)}` : "Collection"} title={source?.source_name ?? sid} right={<TechnicalDetailsSwitch />}
         intro="Every page this source gave in one collection, and what the radar made of each."
         help={<>
           <li>Pages are in the order they were collected. Each shows its type, its crawl depth (0 is a start page),
@@ -109,6 +110,7 @@ function RunSourcePage() {
         </>}>
         <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
           {source && <span className="font-mono text-xs">{source.category}</span>}
+          <Hood><span className="font-mono text-xs text-neutral-500">collection {id}</span></Hood>
           {source && (
             <span className="font-mono text-xs text-neutral-500">{source.source_url}</span>
           )}
@@ -153,7 +155,7 @@ function RunSourcePage() {
                     {d.kind ?? "article"}
                   </span>
                   <span>depth {d.depth ?? "—"}</span>
-                  <span>extracted {formatTime(d.scraped_at)}</span>
+                  <span>extracted {formatAt(d.scraped_at)}</span>
                   {d.published_date && <span>published {d.published_date}</span>}
                   {d.is_stub && (
                     <span className="text-ink">unchanged since previous run</span>
@@ -167,7 +169,7 @@ function RunSourcePage() {
                   {(d.analysis_error || d.partial) && (
                     d.analysis_error && d.analysis_error.reason !== "some parts failed"
                       ? <span className="bg-failed/10 px-1.5 py-0.5 text-failed">Couldn&apos;t be analysed</span>
-                      : <span className="bg-neutral-100 px-1.5 py-0.5 text-ink">◐ Partly analysed</span>
+                      : <span className="bg-neutral-100 px-1.5 py-0.5 text-ink">Partly analysed</span>
                   )}
                   <Hood>
                     {(d.parts ?? 0) > 1 && <span>split into {d.parts} parts</span>}
@@ -176,7 +178,7 @@ function RunSourcePage() {
                 {d.analysis_error && (
                   <p className="mt-1.5 text-xs text-failed">
                     {failureText(d.analysis_error)} Check again retries it.{" "}
-                    <span className="font-mono text-[11px] text-neutral-500">{formatTime(d.analysis_error.at)}</span>
+                    <span className="font-mono text-[11px] text-neutral-500">{formatAt(d.analysis_error.at)}</span>
                   </p>
                 )}
                 {(d.technologies?.length ?? 0) > 0 && (

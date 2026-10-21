@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      { source: "/", destination: "/admin", permanent: false },
       // Signals folded into the Briefing (same query names: days, run, type,
       // tech, source, signal); its other tabs moved to Setup → Signal list
       { source: "/admin/signals", has: [{ type: "query", key: "tab", value: "list" }],

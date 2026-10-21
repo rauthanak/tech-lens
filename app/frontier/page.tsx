@@ -1,0 +1,417 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import BackendError from "@/components/BackendError";
+import PageHeader from "@/components/PageHeader";
+import Grid from "@/components/frontier/Grid";
+import {
+  type Frontier, frontierOf, type Held, type Item, LEADER_STATES, type Lens, LENS_WORDS, moveReason, moveText,
+  pastEmerging, povHref, type Published, upOf,
+} from "@/components/frontier/items";
+import Table from "@/components/frontier/Table";
+import { fetchJson } from "@/lib/api";
+import { formatAt, formatDate, plural } from "@/lib/format";
+import { useHere } from "@/lib/here";
+import { formatScore } from "@/lib/scoring";
+import { PRIORITY } from "@/lib/theme";
+
+const pill = (on: boolean) =>
+  `rounded-full border px-3 py-1 text-sm ${on ? "border-navy bg-navy text-white" : "border-line bg-white text-ink hover:bg-ground"}`;
+const card = "rounded-card border border-line bg-white px-5 py-4";
+
+/** A technology's name, linked to its Point of View when the edition has one. */
+function Name({ item, from, withFabric }: { item: Item; from: string; withFabric: boolean }) {
+  const href = povHref(item, from);
+  return (
+    <>
+      {href ? <Link href={href} className="text-link hover:underline">{item.name}</Link> : item.name}
+      {withFabric && <span className="text-muted"> · {item.fabric}</span>}
+    </>
+  );
+}
+
+function Chip({ priority }: { priority: string | null }) {
+  return priority ? <span className={`px-1 py-px font-mono text-[11px] ${PRIORITY[priority] ?? "bg-neutral-100"}`}>{priority}</span> : null;
+}
+
+/** What couldn't be placed, grouped by why; each technology once per
+ *  reason, with the fabrics it's held in. */
+function NotPlaced({ held, from, withFabric, lens }: { held: Held[]; from: string; withFabric: boolean; lens: Lens }) {
+  const groups = new Map<string, Map<string, { name: string; fabrics: string[]; href: string | null }>>();
+  for (const h of held) {
+    const techs = groups.get(h.reason) ?? new Map();
+    groups.set(h.reason, techs);
+    const tech = techs.get(h.tech_id) ?? { name: h.name, fabrics: [], href: povHref(h, from) };
+    techs.set(h.tech_id, tech);
+    tech.fabrics.push(h.fabric);
+  }
+  const open = held.length <= 12; // a short list shows at once; a long one opens by reason
+  return (
+    <section className="mt-10">
+      <h2 className="text-lg font-semibold">
+        Not placed yet <span className="font-normal text-muted">· {held.length}</span>
+      </h2>
+      <p className="mt-1 max-w-4xl text-sm text-neutral-600">
+        Assessed, but the evidence couldn&apos;t yet say how soon they arrive or how big the prize is
+        {lens === "defence" && ", or Tata hasn't entered the Disruption threat"}, so they have no place on the grid. A
+        later assessment, with more evidence, can place them.
+      </p>
+      {held.length === 0 ? (
+        <p className="mt-3 text-sm text-muted">Nothing: every assessed technology is placed.</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {[...groups].sort((a, b) => b[1].size - a[1].size).map(([reason, techs]) => (
+            <details key={reason} open={open} className="group rounded-card border border-line bg-white">
+              <summary className="flex cursor-pointer list-none items-baseline gap-2 px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
+                <span aria-hidden className="inline-block text-[10px] text-muted transition-transform group-open:rotate-90">▶</span>
+                <span className="text-ink">
+                  {reason}{" "}
+                  <span className="whitespace-nowrap text-muted">· {plural(techs.size, "technology", "technologies")}</span>
+                </span>
+              </summary>
+              <ul className="gap-8 px-4 pb-3 pl-9 text-sm sm:columns-2 xl:columns-3">
+                {[...techs].map(([id, t]) => (
+                  <li key={id} className="break-inside-avoid py-0.5">
+                    {t.href ? <Link href={t.href} className="text-link hover:underline">{t.name}</Link> : t.name}
+                    {withFabric && <span className="text-muted"> · {t.fabrics.join(", ")}</span>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The shortlist the frontier picks: nothing shown is both sooner and higher up. */
+function OnTheFrontier({ on, near, lens, from, withFabric }: {
+  on: Item[]; near: Item[]; lens: Lens; from: string; withFabric: boolean;
+}) {
+  return (
+    <section className={card} aria-label="Best bets now: on the frontier">
+      <h2 className="font-semibold">Best bets now: on the frontier <span className="font-normal text-muted">· {on.length}</span></h2>
+      <p className="mt-0.5 text-[12.5px] text-muted">
+        Nothing else here is both sooner and {lens === "defence" ? "more of a threat" : "bigger"} (the blue line on the
+        grid), sooner first.
+      </p>
+      {on.length === 0 ? <p className="mt-2 text-sm text-muted">Nothing is placed here.</p> : (
+        <ul className="mt-2 space-y-1 text-sm">
+          {on.map((i) => (
+            <li key={`${i.tech_id}:${i.fabric_id}`} className="flex flex-wrap items-baseline gap-x-2">
+              <Chip priority={i.priority} />
+              <span className="min-w-0"><Name item={i} from={from} withFabric={withFabric} /></span>
+              <span className="text-[12px] tabular-nums text-muted">
+                soon {formatScore(i.how_soon ?? 0)} · {lens === "defence" ? "threat" : "big"} {formatScore(upOf(i, lens) ?? 0)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {near.length > 0 && (
+        <p className="mt-2 text-[12.5px] text-neutral-700">
+          <span className="text-muted">Close behind: </span>
+          {near.slice(0, 8).map((i) => (withFabric ? `${i.name} (${i.fabric})` : i.name)).join(", ")}
+          {near.length > 8 && ` and ${near.length - 8} more`}.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Each placement whose priority moved since the edition before, and why. */
+function MovedSince({ moved, previous, from, withFabric }: {
+  moved: Item[]; previous: Published["edition"]["previous"]; from: string; withFabric: boolean;
+}) {
+  return (
+    <section className={card} aria-label="Moved since the last edition">
+      <h2 className="font-semibold">
+        {previous ? `Moved since ${previous.label}` : "Moved since the last edition"}
+        {previous && <span className="font-normal text-muted"> · {moved.length}</span>}
+      </h2>
+      {previous && (
+        <p className="mt-0.5 text-[12.5px] text-muted">
+          Priorities that changed since the edition published {formatAt(previous.published_at, previous.tz)}; on the grid,
+          an arrow beside the dot.
+        </p>
+      )}
+      {!previous ? (
+        <p className="mt-2 text-sm text-muted">This is the first edition: there&apos;s nothing earlier to compare with.</p>
+      ) : moved.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">Nothing shown here moved.</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5 text-sm">
+          {moved.map((i) => (
+            <li key={`${i.tech_id}:${i.fabric_id}`}>
+              <Name item={i} from={from} withFabric={withFabric} />{" "}
+              <span className="whitespace-nowrap font-mono text-[12px]">{moveText(i, undefined)}</span>
+              <span className="block text-[12.5px] text-muted">{i.moved && moveReason(i.moved)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** How far Tata's commitment has got, counted over the placements shown. */
+function Committed({ items }: { items: Item[] }) {
+  return (
+    <section className={card} aria-label="What Tata has committed">
+      <h2 className="font-semibold">What Tata has committed</h2>
+      <p className="mt-0.5 text-[12.5px] text-muted">
+        Per dot shown, from what Tata&apos;s team records on each technology&apos;s fabric. A record never changes a score.
+      </p>
+      <ul className="mt-2 space-y-1 text-sm">
+        {LEADER_STATES.map((s) => (
+          <li key={s.id} className="flex items-baseline gap-2">
+            <span className="w-10 shrink-0 text-right font-semibold tabular-nums">
+              {items.filter((i) => i.leader.state === s.id).length.toLocaleString()}
+            </span>
+            <span className={`rounded px-1.5 py-px text-[11px] ${s.chip}`}>{s.name}</span>
+            <span className="text-[12.5px] text-muted">{s.means}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Assumptions({ items }: { items: Published["assumptions"] }) {
+  return (
+    <section className={card} aria-label="Assumptions in force">
+      <h2 className="font-semibold">Assumptions in force</h2>
+      <p className="mt-0.5 text-[12.5px] text-muted">
+        There&apos;s no economic model behind the grid: these are the stated assumptions it rests on, as they stood when
+        this edition was published: scenarios, not forecasts.
+      </p>
+      {items.length === 0 ? <p className="mt-2 text-sm text-muted">None stated in this edition.</p> : (
+        <ul className="mt-2 space-y-1.5 text-sm">
+          {items.map((a) => (
+            <li key={a.statement}>
+              {a.date && <span className="mr-1.5 whitespace-nowrap font-mono text-[12px] text-muted">{formatDate(a.date, true)}</span>}
+              {a.statement}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function EvidenceThisEdition({ ev, assessed }: { ev: Published["evidence"]; assessed: number }) {
+  const types = [...ev.by_signal_type].sort((a, b) => b.count - a.count);
+  const figures = [["Sources watched", ev.sources_on], ["Pages read", ev.pages_read], ["Findings", ev.signals_found],
+    ["Technologies found", ev.technologies]] as const;
+  return (
+    <section className={card} aria-label="Evidence this edition">
+      <h2 className="font-semibold">Evidence this edition</h2>
+      <p className="mt-0.5 text-[12.5px] text-muted">
+        How much reading stands behind the screen: every collection up to this edition. {plural(assessed, "technology was", "technologies were")} assessed
+        for it.
+      </p>
+      <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {figures.map(([label, n]) => (
+          <div key={label}>
+            <dd className="text-xl font-semibold tabular-nums">{n.toLocaleString()}</dd>
+            <dt className="text-[12px] text-muted">{label}</dt>
+          </div>
+        ))}
+      </dl>
+      {types.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-[13px] text-link">Findings, by type · {types.length}</summary>
+          <ul className="mt-2 gap-6 sm:columns-2">
+            {types.map((t) => (
+              <li key={t.signal_id} className="flex break-inside-avoid justify-between gap-3 py-0.5 text-[13px]">
+                <span>{t.name}</span><span className="tabular-nums text-muted">{t.count.toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function FrontierView() {
+  const params = useSearchParams();
+  const path = usePathname() ?? "/frontier";
+  const here = useHere();
+  const fabric = params.get("fabric") ?? "";
+  const view = params.get("view") === "table" ? "table" : "grid";
+  const lens: Lens = params.get("lens") === "defence" ? "defence" : "growth";
+  // "" emerging (the default: all but the stages past it), "mature" only those, "all" both
+  const stage = params.get("stage") === "mature" ? "mature" : params.get("stage") === "all" ? "all" : "";
+  const [loaded, setLoaded] = useState<{ fabric: string; data: Frontier } | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    fetchJson<Frontier>(`/api/frontier${fabric ? `?fabric=${encodeURIComponent(fabric)}` : ""}`)
+      .then((data) => { setLoaded({ fabric, data }); setError(null); })
+      .catch(setError);
+  }, [fabric]);
+
+  // the address with one choice changed, the others kept
+  const href = (key: "fabric" | "view" | "stage" | "lens", value: string) => {
+    const next = new URLSearchParams(params.toString());
+    if (value) next.set(key, value);
+    else next.delete(key);
+    const q = next.toString();
+    return q ? `${path}?${q}` : path;
+  };
+
+  const raw = loaded?.data;
+  const data = raw && raw.edition ? (raw as Published) : null;
+  const unpublished = raw != null && raw.edition == null;
+  const stale = loaded != null && loaded.fabric !== fabric; // the next fabric is on its way
+  const shown = loaded?.fabric ?? fabric; // the fabric the data on screen is for
+  const inStage = (i: Item) => stage === "all" || (stage === "mature") === pastEmerging(i);
+  const staged = (data?.placed ?? []).filter(inStage);
+  // in Defence, a placement without Tata's Disruption threat entry has no height: it waits, with why
+  const placed = lens === "defence" ? staged.filter((i) => i.threat != null) : staged;
+  const held = [...(data?.held ?? []).filter(inStage),
+    ...(lens === "defence" ? staged.filter((i) => i.threat == null).map((i) => ({ ...i, reason: i.threat_missing ?? "Disruption threat not entered by Tata yet" })) : [])];
+  const past = new Set([...(data?.placed ?? []), ...(data?.held ?? [])].filter(pastEmerging).map((i) => i.tech_id)).size;
+  const pastName = data?.stages.filter((s) => s.known && !s.emerging).map((s) => s.name).join(", ") || "Mature";
+  const fabricName = data?.fabrics.find((f) => f.id === shown)?.name ?? shown;
+  const [soonLo, soonHi] = data?.cutpoints.how_soon ?? [4, 7];
+  const [bigLo, bigHi] = data?.cutpoints.how_big ?? [4, 7];
+  const techs = new Set(placed.map((p) => p.tech_id)).size;
+  const band = data?.near_band ?? 0.5;
+  const frontier = frontierOf(placed, lens, band);
+  const onList = placed.filter((i) => frontier.on.has(i))
+    .sort((a, b) => (b.how_soon ?? 0) - (a.how_soon ?? 0) || (upOf(b, lens) ?? 0) - (upOf(a, lens) ?? 0));
+  const nearList = placed.filter((i) => frontier.near.has(i));
+  const since = data?.edition.previous?.label;
+  const withFabric = !shown;
+
+  return (
+    <div>
+      <PageHeader title="Technology priorities"
+        intro="Where each emerging technology stands for Tata Communications: how soon it arrives (across), how big the prize is (up), and its priority (colour)."
+        help={<>
+          <li>This is an edition: every dot and Point of View as they stood when Tata&apos;s radar team published it.
+            The radar keeps working after that; this screen changes only at the next edition.</li>
+          <li>Each dot is one technology in one fabric, the business line it&apos;s judged for. A technology that
+            matters to several fabrics has a dot in each.</li>
+          <li>Across is how soon it arrives at scale, 0 to 10: further right is sooner. Up is how big the prize is for
+            Tata Communications, 0 to 10; View by &ldquo;{LENS_WORDS.defence.name}&rdquo; makes up the Disruption
+            threat Tata enters instead.</li>
+          <li>Colour is the priority, from P1 act now (darkest) to P6 just watch (lightest). A ring means a person set
+            it; an arrow means it moved since the edition before.</li>
+          <li>The corners: Act (sooner and bigger), Plan (bigger, but later), Wait (sooner, but smaller) and Watch
+            (later and smaller), split by the dotted lines at {soonLo} and {soonHi}{" "}
+            across{bigLo !== soonLo || bigHi !== soonHi ? ` and ${bigLo} and ${bigHi} up` : " and up"}, where the
+            priority changes. The blue line marks the best bets now; the hatched band, within {band} of it, those close
+            behind.</li>
+          <li>Click a dot, or Read in the table, for its Point of View in this edition: what Tata Communications should
+            do, and why.</li>
+        </>}>
+        {data && (
+          <p className="mt-2 text-sm text-ink">
+            {data.edition.name ? <><b className="font-semibold">Edition {data.edition.name}</b> · published </> : "Published "}
+            {formatAt(data.edition.published_at, data.edition.tz)}
+          </p>
+        )}
+        {data && !stale && (
+          <p className="mt-1 text-sm text-neutral-600">
+            {placed.length > 0
+              ? `${plural(placed.length, "dot")} on the grid (${plural(techs, "technology", "technologies")}${fabric ? ` in ${fabricName}` : ""}; one dot per technology per fabric) · ${held.length.toLocaleString()} not placed yet`
+              : `${held.length.toLocaleString()} not placed yet`}
+            {stage === "" && past > 0 && ` · ${plural(past, "technology", "technologies")} at ${pastName} left out`}
+          </p>
+        )}
+      </PageHeader>
+
+      {error != null && <BackendError error={error} />}
+
+      {unpublished && (
+        <div className={`mt-6 ${card} py-6 text-sm text-neutral-700`}>
+          <p className="font-semibold text-ink">Nothing is published yet.</p>
+          <p className="mt-1 max-w-3xl">
+            This view shows an edition: every placement and Point of View as they stood when Tata Communications&apos;
+            radar team published it. Once the first edition is published, it shows here.
+          </p>
+        </div>
+      )}
+
+      {data && (
+        <div className={`mt-6 ${stale ? "opacity-50" : ""}`}>
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+            <nav aria-label="Fabric" className="flex flex-wrap gap-1.5">
+              <Link href={href("fabric", "")} scroll={false} className={pill(!fabric)}
+                aria-current={!fabric ? "page" : undefined}>All</Link>
+              {data.fabrics.map((f) => (
+                <Link key={f.id} href={href("fabric", f.id)} scroll={false} className={pill(fabric === f.id)}
+                  aria-current={fabric === f.id ? "page" : undefined}>{f.name}</Link>
+              ))}
+            </nav>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ["View by", "lens", lens === "defence" ? "defence" : "", [["", LENS_WORDS.growth.name], ["defence", LENS_WORDS.defence.name]],
+                  "Up is how big the prize is, or the Disruption threat Tata enters (the threat to existing revenue if Tata does nothing); a dot without Tata's entry waits under Not placed yet"],
+                ["Stage", "stage", stage, [["", "Emerging"], ["mature", pastName], ["all", "All stages"]],
+                  `How far a technology is on the market: Research, Pilot, Early commercial or ${pastName}. Emerging shows every stage but ${pastName}, including those not judged yet`],
+                ["Show as", "view", view === "table" ? "table" : "", [["", "Grid"], ["table", "Table"]],
+                  "The table lists the same dots, most urgent first"],
+              ] as const).map(([label, key, current, options, hint]) => (
+                <nav key={key} aria-label={label} title={hint} className="flex items-center rounded-full border border-line bg-white p-0.5 text-sm">
+                  <span className="px-2 text-xs text-muted">{label}</span>
+                  {options.map(([v, name]) => (
+                    <Link key={v} href={href(key, v)} scroll={false} aria-current={current === v ? "page" : undefined}
+                      className={`rounded-full px-3.5 py-1 ${current === v ? "bg-navy text-white" : "text-ink hover:bg-ground"}`}>
+                      {name}
+                    </Link>
+                  ))}
+                </nav>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            {placed.length === 0 ? (
+              <p className="rounded-card border border-line bg-white px-5 py-6 text-sm text-neutral-600">
+                {lens === "defence" && staged.length > 0
+                  ? `Nothing here has a Disruption threat entered by Tata yet, so this view has nothing to place: see Not placed yet below, or view by ${LENS_WORDS.growth.name}.`
+                  : stage === "mature"
+                    ? `Nothing at ${pastName}${shown ? ` in ${fabricName}` : ""} is placed.`
+                    : `Nothing is placed${shown ? ` in ${fabricName}` : ""} in this edition.`}
+              </p>
+            ) : view === "table" ? (
+              <Table items={placed} from={here} lens={lens} frontier={frontier} since={since} />
+            ) : (
+              <Grid key={`${shown}:${stage}:${lens}`} items={placed} cutpoints={data.cutpoints} withFabric={withFabric}
+                from={here} lens={lens} frontier={{ ...frontier, band }} since={since} />
+            )}
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+            <OnTheFrontier on={onList} near={nearList} lens={lens} from={here} withFabric={withFabric} />
+            <MovedSince moved={placed.filter((i) => i.moved)} previous={data.edition.previous} from={here} withFabric={withFabric} />
+            <Committed items={placed} />
+          </div>
+
+          <NotPlaced held={held} from={here} withFabric={withFabric} lens={lens} />
+
+          <div className="mt-10 grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+            <Assumptions items={data.assumptions} />
+            <EvidenceThisEdition ev={data.evidence} assessed={data.edition.counts.technologies} />
+          </div>
+        </div>
+      )}
+      {!raw && error == null && <p className="mt-6 text-sm text-muted">Loading…</p>}
+    </div>
+  );
+}
+
+export default function FrontierPage() {
+  return (
+    <Suspense fallback={null}>
+      <FrontierView />
+    </Suspense>
+  );
+}

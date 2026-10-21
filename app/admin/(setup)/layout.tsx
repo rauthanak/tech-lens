@@ -13,8 +13,14 @@ const ITEMS = [
     active: (p: string) => under("/admin/sources")(p) && !under("/admin/sources/settings")(p) },
   { href: "/admin/signals/list", label: "Signal list", active: under("/admin/signals/list") },
   { href: "/admin/scoring", label: "Scoring method", active: under("/admin/scoring") },
+  { href: "/admin/classification", label: "Classification", active: under("/admin/classification") },
+  { href: "/admin/path", label: "Path to scale", active: under("/admin/path") },
+  { href: "/admin/mechanisms", label: "Mechanisms", active: under("/admin/mechanisms") },
+  { href: "/admin/assumptions", label: "Assumptions", active: under("/admin/assumptions") },
+  { href: "/admin/import", label: "Import technologies", active: under("/admin/import") },
+  { href: "/admin/finance", label: "Finance", active: under("/admin/finance") },
   { href: "/admin/prompts", label: "Skills", active: under("/admin/prompts") },
-  { href: "/admin/sources/settings", label: "Crawl settings", active: under("/admin/sources/settings") },
+  { href: "/admin/sources/settings", label: "Settings", active: under("/admin/sources/settings") },
   { href: "/admin/changes", label: "Changes", active: under("/admin/changes") },
 ];
 
@@ -36,7 +42,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
                   : "text-muted hover:text-ink lg:border-transparent"}`}>
               <span className="flex-1">{item.label}</span>
               {item.label === "Changes" && changes > 0 && (
-                <span title="Edits not yet in the seeding data"
+                <span title="Edits not yet in the starting files"
                   className="rounded-full bg-azure px-1.5 font-mono text-[10px] text-ink">
                   {changes}
                 </span>

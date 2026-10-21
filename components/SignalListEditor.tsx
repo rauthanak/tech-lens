@@ -120,8 +120,9 @@ export default function SignalListEditor() {
               <h2 className="text-lg font-semibold">{MODE_LABELS[mode]}</h2>
               <p className="text-xs text-neutral-500">
                 {mode === "never_miss"
-                  ? "Called out in the summary with its implication when a page states it. Findings on the Briefing follow this order; reordering costs no model calls and doesn't mark pages as not yet checked."
-                  : "A page that is wholly this kind of content, with no signal, is set aside: kept, but not used for technologies or assessments."}
+                  ? "Events the radar always reports when a page states one. Each becomes a finding on the Briefing, in this order. Reordering is free."
+                  : "A page that is only this, with no event worth keeping, is set aside: kept, but not used to find technologies or in assessments."}
+                {" "}Switch a row off to pause it without deleting it.
               </p>
               <div className="mt-2 divide-y divide-neutral-100 rounded-card border border-line bg-white">
                 {rows.filter((r) => r.mode === mode).map((r, i, list) => (

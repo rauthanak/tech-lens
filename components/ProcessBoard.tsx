@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import CollectButton from "@/components/CollectButton";
 import ConfirmAction from "@/components/ConfirmAction";
-import { calls, organizeTechnologies, resumeAssessment, startAssessment, startCheck, writePovs } from "@/lib/actions";
-import { formatDay, plural } from "@/lib/format";
+import { calls, organizeTechnologies, resumeAssessment, startAssessment, startCheck, startClassify, writePovs } from "@/lib/actions";
+import { fetchJson } from "@/lib/api";
+import { formatAt, plural } from "@/lib/format";
 import { blockedReason, isLive, usePipeline } from "@/lib/pipeline";
 import { LIVE_DOT } from "@/lib/theme";
 
 type Column = {
   title: string;
   state: React.ReactNode;
-  detail?: React.ReactNode;
+  last?: React.ReactNode; // when it last ran, and what it did
+  detail: React.ReactNode; // what the step does, in plain words
   live?: boolean;
   needsYou?: boolean;
   action?: React.ReactNode;
@@ -23,13 +26,32 @@ const Progress = ({ children }: { children: React.ReactNode }) => (
   <span className="flex items-center gap-2 text-sm text-ink"><span className={LIVE_DOT} />{children}</span>
 );
 
-/** Collect → Signals → Organize → Assess → Points of View: each step's
- *  state and its one action; while a step runs, its progress replaces the
- *  action. A collection does the next two itself, so only assessing and
- *  writing ever wait for you (`needsYou`); re-checking older pages is
- *  optional. */
+/** Why technologies failed in a Classify run, from its record: each reason once. */
+function useClassifyFailures(runId?: string, failed = 0): string | null {
+  const [why, setWhy] = useState<{ runId: string; text: string } | null>(null);
+  useEffect(() => {
+    if (!runId || !failed) return;
+    fetchJson<{ runs: { _id: string; failed?: { reason: string }[] }[] }>("/api/classify/runs?limit=1")
+      .then((d) => {
+        const run = d.runs.find((r) => r._id === runId);
+        const reasons = [...new Set((run?.failed ?? []).map((f) => f.reason.slice(0, 120)))];
+        if (reasons.length) setWhy({ runId, text: reasons.join("; ") });
+      })
+      .catch(() => {});
+  }, [runId, failed]);
+  return why && why.runId === runId ? why.text : null;
+}
+
+/** Collect → Signals → Organize → Classify → Assess → Points of View: each
+ *  step's state, when it last ran and what it did, what it does, and its one
+ *  action; while a step runs, its progress replaces the action. A collection
+ *  does the next three itself, so only assessing and writing ever wait for
+ *  you (`needsYou`), and classifying when a run left some; re-checking older
+ *  pages is optional. Times are in the viewer's own zone, to the minute. */
 export default function ProcessBoard() {
   const p = usePipeline();
+  const c = p?.classify;
+  const whyFailed = useClassifyFailures(c?.run_id, c?.failed);
   if (!p) return null;
   const { collect, signals, technologies, assess, pov } = p;
   const check = signals.recheck?.status === "running" ? signals.recheck : null;
@@ -38,15 +60,26 @@ export default function ProcessBoard() {
   const writing = pov.job?.status === "running" ? pov.job : null;
   const organizing = technologies.resolve_status === "running" || collect.stage === "resolving" ||
     signals.recheck?.stage === "organizing technologies";
+  const classifying = isLive(c?.status);
+  const newNames = technologies.new_names;
+
+  // the last Classify run: what it updated, what had nothing new, what failed and why
+  const failed = c?.failed ? `, ${c.failed} failed${whyFailed ? ` (${whyFailed})` : ""}` : "";
+  const classified = !c?.finished_at || classifying ? undefined
+    : c.status === "failed" ? `Failed ${formatAt(c.finished_at)}: ${c.error ?? "no reason was recorded"}`
+    : [`Classified ${formatAt(c.finished_at)}`,
+      `${c.unchanged == null ? `${plural(c.done ?? 0, "technology", "technologies")} looked at`
+        : `${(c.done ?? 0) - c.unchanged - (c.failed ?? 0)} updated, ${c.unchanged} had nothing new`}${failed}`,
+      ...(c.stopped_reason ? [c.stopped_reason] : c.status === "terminated" ? ["stopped by you"] : [])].join(" · ");
 
   const columns: Column[] = [
     {
       title: "Collect",
       state: isLive(collect.status) ? `Collecting · ${plural(collect.pages ?? 0, "page")} so far`
         : collect.status === "none" ? "Not collected yet"
-        : <>Last collected {formatDay(collect.finished_at)} · {plural(collect.new_documents ?? 0, "new page")}
+        : <>Last collected {formatAt(collect.finished_at)} · {plural(collect.new_documents ?? 0, "new page")}
           {(collect.incomplete ?? 0) > 0 && <> · {plural(collect.incomplete ?? 0, "website")} reached the page limit</>}</>,
-      detail: "Each collection also finds the signals on new pages and organizes technologies.",
+      detail: "Visits the websites and data sources the radar watches and keeps the pages that are new or changed. Then, by itself, it picks out the findings on them and organizes and classifies technologies.",
       live: isLive(collect.status),
       action: <CollectButton />,
       href: "/admin/runs", link: "Collections",
@@ -54,10 +87,12 @@ export default function ProcessBoard() {
     {
       title: "Signals",
       state: check ? `Checking ${check.done} of ${plural(check.total, "page")}`
-        : signals.stale_pages > 0 ? `Automatic for new pages · ${plural(signals.stale_pages, "older page")} not checked against the current list`
-        : "Automatic for new pages · every page checked against the signal list",
-      detail: collect.status !== "none" &&
-        `${plural(signals.never_miss + signals.other, "finding")} (${signals.other} other) · ${signals.set_aside} set aside, in the last collection`,
+        : signals.stale_pages > 0 ? `${plural(signals.stale_pages, "older page")} not checked against the current signal list`
+        : "Every page checked against the current signal list",
+      last: collect.status !== "none" && <>In the last collection: {plural(signals.never_miss + signals.other, "finding")}
+        {signals.other > 0 && ` (${signals.other} not on your signal list)`} · {plural(signals.set_aside, "page")} set aside by
+        a Can ignore rule</>,
+      detail: "Reads each new page for the events on your signal list, such as a funding round or a launch, and keeps each one as a finding. Runs by itself on every new page; older pages are checked again only when you ask.",
       live: !!check,
       action: signals.stale_pages > 0 && (
         <ConfirmAction label="Check again" cost={calls(signals.stale_pages)} secondary
@@ -69,23 +104,45 @@ export default function ProcessBoard() {
     {
       title: "Organize",
       state: organizing ? "Organizing technologies"
-        : `Automatic after each collection · last ${formatDay(technologies.resolved_at)}`,
-      detail: plural(technologies.count, "technology", "technologies"),
+        : technologies.resolved_at ? <>Last organized {formatAt(technologies.resolved_at)}
+          {newNames != null && ` · ${newNames ? `${plural(newNames, "new name")} looked at` : "no new names"}`}</>
+        : "Not organized yet",
+      detail: "Merges names that mean the same technology (say “GenAI” and “Generative AI”) and adds new ones. Runs by itself after each collection.",
       live: organizing,
       action: (
         <ConfirmAction label="Organize now" cost="a few model calls" secondary
-          question="Organize technologies now? It uses a few model calls for names it hasn't seen, and gives new technologies their usual capitals."
+          question="Organize technologies now? It merges names that mean the same technology and adds new ones, with a few model calls for names it hasn't seen before."
           disabled={organizing ? "Technologies are being organized." : isLive(collect.status) ? "A collection run is in progress." : null}
           onConfirm={organizeTechnologies} />
       ),
-      href: "/admin/technologies", link: "Technologies",
+      href: "/admin/technologies", link: plural(technologies.count, "technology", "technologies"),
+    },
+    {
+      title: "Classify",
+      state: classifying ? `Classifying ${c?.done ?? 0} of ${plural(c?.total ?? 0, "technology", "technologies")}`
+        : (c?.pending ?? 0) > 0 ? `${plural(c!.pending, "technology has", "technologies have")} new pages to classify`
+        : c?.finished_at ? "Up to date" : "Nothing classified yet",
+      last: classified,
+      detail: "Files each technology under a domain, says whether it's on sale yet and how mature it is (TRL), and how solid its evidence is. Runs by itself after each collection.",
+      live: classifying,
+      needsYou: !classifying && (c?.pending ?? 0) > 0,
+      action: (c?.pending ?? 0) > 0 && (
+        <ConfirmAction label={`Classify ${c!.pending}`} cost={calls(c!.pending)} secondary
+          question={`Classify ${plural(c!.pending, "technology", "technologies")} with new pages? One model call each, within the run's token budget (Setup › Settings).`}
+          disabled={classifying ? "Technologies are being classified." : null}
+          onConfirm={() => startClassify(null)} />
+      ),
+      href: "/admin/technologies?view=not_assessed", link: "Technologies",
     },
     {
       title: "Assess",
       state: isLive(assess.status) ? `Assessing ${assess.techs_done ?? 0} of ${plural(assess.techs_total ?? 0, "technology", "technologies")}`
-        : resume ? `The run of ${formatDay(resume.started_at)} stopped with ${plural(resume.count, "technology", "technologies")} left`
+        : resume ? `The run of ${formatAt(resume.started_at)} stopped with ${plural(resume.count, "technology", "technologies")} left`
         : assess.techs_with_new_evidence > 0 ? `${plural(assess.techs_with_new_evidence, "technology has", "technologies have")} new pages`
-        : assess.status === "none" ? "Not assessed yet" : `Last run ${formatDay(assess.finished_at)}`,
+        : assess.status === "none" ? "Not assessed yet" : "Up to date",
+      last: assess.status === "completed" && assess.finished_at &&
+        `Last assessed ${formatAt(assess.finished_at)} · ${plural(assess.techs_done ?? 0, "technology", "technologies")}`,
+      detail: "Scores each technology in every fabric it touches, from its pages, which sets its priority, and writes its use cases. It costs model calls, so it waits for you.",
       live: isLive(assess.status),
       needsYou: !isLive(assess.status) && (!!resume || !!toAssess),
       action: resume ? (
@@ -102,8 +159,8 @@ export default function ProcessBoard() {
     {
       title: "Points of View",
       state: writing ? `Writing ${writing.done} of ${writing.total}`
-        : pov.pending > 0 ? `${pov.pending} to write` : `${pov.composed} written`,
-      detail: pov.pending > 0 && !writing ? `${pov.composed} written` : undefined,
+        : pov.pending > 0 ? `${pov.pending} to write · ${pov.composed} written` : `${pov.composed} written`,
+      detail: "The radar's conclusion on each technology, for leaders, written from its latest assessment. One model call each, so it waits for you.",
       live: !!writing,
       needsYou: !writing && pov.pending > 0,
       action: pov.pending > 0 && (
@@ -116,20 +173,21 @@ export default function ProcessBoard() {
   ];
 
   return (
-    <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      {columns.map((c) => (
-        <li key={c.title} className={`flex flex-col rounded-card border bg-white px-4 py-3 ${
-          c.needsYou ? "border-azure ring-1 ring-azure" : "border-line"}`}>
+    <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+      {columns.map((col) => (
+        <li key={col.title} className={`flex flex-col rounded-card border bg-white px-4 py-3 ${
+          col.needsYou ? "border-azure ring-1 ring-azure" : "border-line"}`}>
           <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-neutral-500">
-            {c.title}
+            {col.title}
           </div>
           <div className="mt-1.5 text-sm font-medium text-ink">
-            {c.live ? <Progress>{c.state}</Progress> : c.state}
+            {col.live ? <Progress>{col.state}</Progress> : col.state}
           </div>
-          {c.detail && <div className="mt-1 text-xs text-muted">{c.detail}</div>}
+          {col.last && <div className="mt-1 text-[13px] text-ink">{col.last}</div>}
+          <div className="mt-1 text-xs text-muted">{col.detail}</div>
           <div className="mt-auto flex flex-wrap items-end justify-between gap-2 pt-3">
-            {!c.live && c.action}
-            <Link href={c.href} className="text-xs text-link hover:underline">{c.link} →</Link>
+            {!col.live && col.action}
+            <Link href={col.href} className="text-xs text-link hover:underline">{col.link} →</Link>
           </div>
         </li>
       ))}

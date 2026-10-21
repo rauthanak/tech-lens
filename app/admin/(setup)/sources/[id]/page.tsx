@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
+import Hood from "@/components/Hood";
 import ListEditor from "@/components/ListEditor";
 import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
+import { clusterName } from "@/components/SourceBrowser";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import { formatTime } from "@/lib/format";
 
 type Progress = {
@@ -39,6 +41,7 @@ type Source = {
 };
 
 type Adapter = { name: string; label: string; search_help: string; example: string; keys: string[]; configured: boolean };
+type Horizons = Record<string, { label?: string; meaning?: string }>;
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500 disabled:bg-neutral-50 disabled:text-neutral-500";
@@ -49,6 +52,9 @@ export default function SourceEditorPage() {
   const { id } = useParams<{ id: string }>();
   const [form, setForm] = useState<Source | null>(null);
   const [adapter, setAdapter] = useState<Adapter | null>(null);
+  // the horizons' words and the kinds of source in use, from the Sources list
+  const [horizons, setHorizons] = useState<Horizons>({});
+  const [clusters, setClusters] = useState<string[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -64,6 +70,12 @@ export default function SourceEditorPage() {
             .catch(() => {});
       })
       .catch(setError);
+    fetchJson<{ horizons: Horizons; sources: { cluster: string }[] }>("/api/sources")
+      .then((d) => {
+        setHorizons(d.horizons);
+        setClusters([...new Set(d.sources.map((s) => s.cluster))].sort((a, b) => clusterName(a).localeCompare(clusterName(b))));
+      })
+      .catch(() => {});
   }, [id]);
 
   const set = (patch: Partial<Source>) => setForm((f) => (f ? { ...f, ...patch } : f));
@@ -91,7 +103,7 @@ export default function SourceEditorPage() {
       configChanged();
       setSaved(true);
     } catch (e) {
-      setSaveError(e instanceof ApiError ? (e.detail ?? e.message) : "save failed");
+      setSaveError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -104,23 +116,22 @@ export default function SourceEditorPage() {
       <PageHeader eyebrow="Sources" title={form?.name ?? "Edit source"}
         intro="How the radar reads this source. Saving costs no model calls and applies from the next collection."
         help={<>
-          <li>Websites: the crawl starts at the start pages, or at the source&apos;s address when there are none,
-            and takes up to the page budget set in Crawl settings. RSS or Atom feeds work as start pages.</li>
+          <li>Websites: the crawl starts at the start pages, in their order, or at the source&apos;s address when there
+            are none, and takes up to the page budget set in Setup › Settings. RSS or Atom feeds work as start
+            pages.</li>
           <li>Follow links to other sites, one hop: pages on other sites that this one links to are collected
             too, but their own links aren&apos;t followed.</li>
           <li>Data sources: each saved search runs at every collection. Progress shows how far it has collected and
             what&apos;s still to collect when the page budget ran out; &ldquo;too broad&rdquo; means narrow the
             search.</li>
-          <li>Horizon, cost and cluster organise the list on Sources. Enabled decides whether the next collection
-            reads it.</li>
+          <li>Horizon, cost and kind of source organise the list on Sources. Enabled decides whether the next
+            collection reads it.</li>
         </>}>
-        <p className="mt-2 flex flex-wrap items-center gap-3 font-mono text-xs text-neutral-500">
-          {id}
-          {form && (
-            <span className="bg-neutral-100 px-1.5 py-0.5 uppercase text-neutral-700">
-              {never ? "never collected" : access === "query" ? `data source · ${adapter?.label ?? form.adapter}` : "website"}
-            </span>
-          )}
+        <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
+          {form && (never ? "Not collected"
+            : access === "query" ? `Data source (${adapter?.label ?? form.adapter}): answers its saved searches`
+              : "Website, crawled page by page")}
+          <Hood><span className="font-mono text-xs text-neutral-500">{id}</span></Hood>
         </p>
       </PageHeader>
 
@@ -128,7 +139,7 @@ export default function SourceEditorPage() {
 
       {form && never && (
         <p className="mt-6 rounded-card border border-neutral-300 bg-neutral-50 px-4 py-3 text-sm text-neutral-700">
-          🔒 This source is never collected{form.note ? `: ${form.note}` : "."} It stays in the register for reference.
+          🔒 This source is never collected{form.note ? `: ${form.note}` : "."} It stays on the Sources list for reference.
         </p>
       )}
 
@@ -154,27 +165,31 @@ export default function SourceEditorPage() {
                   <span className={label}>Horizon</span>
                   <div className="mt-1 flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
                     {(["H1", "H2", "H3"] as const).map((h) => (
-                      <button key={h} type="button" onClick={() => set({ horizon: h })}
+                      <button key={h} type="button" onClick={() => set({ horizon: h })} title={horizons[h]?.label}
                         className={`flex-1 px-3 py-1.5 ${form.horizon === h ? "bg-navy font-medium text-white" : "hover:bg-neutral-100"}`}>
                         {h}
                       </button>
                     ))}
                   </div>
+                  {horizons[form.horizon]?.label && (
+                    <span className={help}>{form.horizon} · {horizons[form.horizon].label}</span>
+                  )}
                 </div>
                 <div>
                   <label className={label} htmlFor="cost">Cost</label>
                   <select id="cost" className={field} value={form.cost} onChange={(e) => set({ cost: e.target.value })}>
                     <option value="free">Free</option>
-                    <option value="free_tier">Free tier</option>
-                    <option value="licensed">Licensed</option>
+                    <option value="free_tier">Free up to a limit</option>
+                    <option value="licensed">Paid subscription (skipped unless paid sources are allowed)</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className={label} htmlFor="cluster">Cluster</label>
-                <input id="cluster" className={`${field} font-mono text-xs`} value={form.cluster}
-                  onChange={(e) => set({ cluster: e.target.value })} required />
+                <label className={label} htmlFor="cluster">Kind of source <span className="font-normal text-neutral-500">(groups the Sources list)</span></label>
+                <select id="cluster" className={field} value={form.cluster} onChange={(e) => set({ cluster: e.target.value })}>
+                  {[...new Set([form.cluster, ...clusters])].map((c) => <option key={c} value={c}>{clusterName(c)}</option>)}
+                </select>
               </div>
 
               <label className="flex items-center gap-2 text-sm">
@@ -187,8 +202,8 @@ export default function SourceEditorPage() {
               <div className="space-y-5">
                 <div>
                   <span className={label}>Start pages</span>
-                  <span className={help}>Empty means start from the source URL. RSS or Atom feeds work too.</span>
-                  <ListEditor items={form.entry_urls ?? []} placeholder="https://…"
+                  <span className={help}>Empty means start from the source URL. RSS or Atom feeds work too. Read in this order.</span>
+                  <ListEditor ordered items={form.entry_urls ?? []} placeholder="https://…"
                     onChange={(items) => set({ entry_urls: items })} />
                 </div>
                 <label className="flex items-start gap-2 text-sm">

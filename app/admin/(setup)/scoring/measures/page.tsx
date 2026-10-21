@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
-import PageHelp from "@/components/PageHelp";
+import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
-import { AXIS_LABELS, AXIS_ORDER, Measure, OpenQuestionBadge } from "@/lib/scoring";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { AXIS_LABELS, AXIS_ORDER, Measure, type MeasureScope, OpenQuestionBadge, SCOPE_LABELS, SCOPE_MEANING, weightShare } from "@/lib/scoring";
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -41,13 +41,14 @@ export default function MeasuresPage() {
         anchors: selected.anchors,
         required_evidence: selected.required_evidence,
         open_question: selected.open_question || null,
+        scope: selected.scope ?? "fabric",
       });
       configChanged();
       setSaved(true);
       setSelected(null);
       load();
     } catch (e) {
-      setSaveError(e instanceof ApiError ? (e.detail ?? e.message) : "save failed");
+      setSaveError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -55,21 +56,23 @@ export default function MeasuresPage() {
 
   return (
     <div>
-      <p className="max-w-4xl text-sm text-neutral-600">
-        The twelve questions every technology is scored on, from 0 to 10.
-      </p>
-      <PageHelp>
-        <li>They&apos;re grouped by the TORA number they feed: Market Potential, Strategic Fit and Adoption
-          Readiness. Outside TORA measures are scored too: X1 and X2 feed the priority grid, X3 the Point of
-          View.</li>
-        <li>× is a measure&apos;s weight within its group; weights act as shares of the group&apos;s average. A
-          measure the evidence can&apos;t support is left out, never counted as zero.</li>
-        <li>Each measure has anchors (what a low, mid and high score look like) and the evidence it needs. The
-          models score against them and must cite the pages they used.</li>
+      <PageHeader title="Measures"
+        intro="The twelve questions every technology is scored on, from 0 to 10, in each fabric it touches."
+        help={<>
+        <li>They&apos;re grouped by the three scores they feed: Market Potential, Strategic Fit and Adoption
+          Readiness. Disruption threat and Serviceable capture feed the priority grid; Capability gap feeds the
+          Point of View.</li>
+        <li>Scored: per technology (judged once, for the technology as a whole, and used in every fabric), per
+          fabric (judged in each fabric it touches), or entered by Tata (never asked of the model: entered on the
+          technology&apos;s page). An assessment makes one call per technology, then one per fabric.</li>
+        <li>The percentage is a measure&apos;s share of its score&apos;s average. A measure the evidence can&apos;t
+          support is left out, never counted as zero.</li>
+        <li>Each measure says what a low, middle and high score look like, and the evidence it needs. The models
+          score against them and must cite the pages they used.</li>
         <li>Click a measure to edit it. Edits apply from the next assessment run; a weight change can also be
-          applied to a past run with Recompute on its page, at no model cost. &ldquo;? open&rdquo; marks a question
-          still waiting on the client.</li>
-      </PageHelp>
+          applied to a past run with Redo scores on its page, at no model cost. &ldquo;Open question&rdquo; marks
+          a question still waiting on Tata.</li>
+      </>} />
       <div className="mt-2"><SavedNote show={saved} /></div>
 
       {error != null && <BackendError error={error} />}
@@ -99,19 +102,21 @@ export default function MeasuresPage() {
                           setSelected({ ...m });
                           setSaveError(null);
                         }}
-                        className={`flex w-full items-center gap-4 px-4 py-2.5 text-left hover:bg-neutral-50 ${
+                        className={`flex w-full items-baseline gap-4 px-4 py-2.5 text-left hover:bg-neutral-50 ${
                           selected?._id === m._id ? "bg-neutral-50" : ""
                         }`}
                       >
-                        <span className="w-8 shrink-0 font-mono text-xs text-neutral-500">{m.code}</span>
-                        <span className="min-w-0 flex-1 truncate">
+                        <span className="min-w-0 flex-1">
                           <span className="font-medium">{m.name}</span>
                           {!selected && (
-                            <span className="ml-2 text-sm text-neutral-500">{m.definition}</span>
+                            <span className="mt-0.5 block text-sm text-neutral-500">{m.definition}</span>
                           )}
                         </span>
+                        <span className="hidden shrink-0 text-xs text-muted sm:inline">
+                          {SCOPE_LABELS[m.scope ?? "fabric"]}
+                        </span>
                         <span className="shrink-0 font-mono text-xs tabular-nums text-neutral-600">
-                          {m.weight != null ? `× ${m.weight}` : "—"}
+                          {weightShare(m.weight)}
                         </span>
                         <OpenQuestionBadge question={m.open_question} />
                       </button>
@@ -130,12 +135,7 @@ export default function MeasuresPage() {
               save();
             }}
           >
-            <div className="flex items-baseline justify-between">
-              <h2 className="text-lg font-semibold">
-                Edit {selected.code} — {selected.name}
-              </h2>
-              <span className="font-mono text-xs text-neutral-500">v{selected.version}</span>
-            </div>
+            <h2 className="text-lg font-semibold">Edit {selected.name}</h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium">Name</label>
@@ -144,7 +144,7 @@ export default function MeasuresPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium">
-                  Weight within axis {selected.axis === "extra" && "(extras carry none)"}
+                  Weight within its score (0 to 1; measures outside the three scores have none)
                 </label>
                 <input className={field} type="number" step="0.05" min="0" max="1"
                   value={selected.weight ?? ""}
@@ -154,13 +154,22 @@ export default function MeasuresPage() {
               </div>
             </div>
             <div>
+              <label className="block text-sm font-medium">Scored</label>
+              <select className={field} value={selected.scope ?? "fabric"}
+                onChange={(e) => setSelected({ ...selected, scope: e.target.value as MeasureScope })}>
+                {(Object.keys(SCOPE_LABELS) as MeasureScope[]).map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}
+              </select>
+              <p className="mt-1 text-xs text-neutral-500">{SCOPE_MEANING[selected.scope ?? "fabric"]} Applies from the next
+                assessment run.</p>
+            </div>
+            <div>
               <label className="block text-sm font-medium">Definition</label>
               <textarea className={`${field} min-h-16`} value={selected.definition}
                 onChange={(e) => setSelected({ ...selected, definition: e.target.value })} required />
             </div>
             {(["low", "mid", "high"] as const).map((k) => (
               <div key={k}>
-                <label className="block text-sm font-medium">Anchor — {k}</label>
+                <label className="block text-sm font-medium">What a {k === "mid" ? "middle" : k} score looks like</label>
                 <input className={field} value={selected.anchors[k]}
                   onChange={(e) =>
                     setSelected({ ...selected, anchors: { ...selected.anchors, [k]: e.target.value } })
@@ -175,7 +184,7 @@ export default function MeasuresPage() {
             <div>
               <label className="block text-sm font-medium">Open question</label>
               <input className={field} value={selected.open_question ?? ""}
-                placeholder="what still needs the client's answer — blank it once settled"
+                placeholder="what still needs Tata's answer; clear it once settled"
                 onChange={(e) => setSelected({ ...selected, open_question: e.target.value })} />
             </div>
             {saveError && <p className="text-sm text-failed">Save failed: {saveError}</p>}

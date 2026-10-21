@@ -7,11 +7,12 @@ import ConfirmAction from "@/components/ConfirmAction";
 import FabricLabel from "@/components/FabricLabel";
 import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
-import { writePovs } from "@/lib/actions";
+import { calls, writePovs } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
 import { usePipeline } from "@/lib/pipeline";
+import { LEGEND } from "@/lib/scoring";
 import { useTechLabel } from "@/lib/tech-labels";
 import { LIVE_DOT, PRIORITY } from "@/lib/theme";
 
@@ -22,10 +23,12 @@ type PovRow = {
   technology: string;
   version: number;
   composed_at: string;
+  composed_tz?: string | null;
   assessed_at: string | null; // the assessment it was written from
   sections?: { headline?: string };
   new_since_written: number | null;
-  placements: { fabric_id: string; fabric: string; priority: string | null; horizon: string | null }[];
+  placements: { fabric_id: string; fabric: string; priority: string | null; horizon: string | null;
+    computed_priority?: string | null; override?: { priority: string; reason: string | null } | null }[];
 };
 
 type Waiting = { scoring_run_id: string; tech_id: string; technology: string; assessed_at: string };
@@ -41,7 +44,7 @@ type Job = {
   started_at: string;
 } | null;
 
-type Library = { povs: PovRow[]; uncomposed: Waiting[]; assessed: number; job: Job };
+type Library = { povs: PovRow[]; uncomposed: Waiting[]; assessed: number; switched_off: number; job: Job };
 
 const PAGE = 24; // cards at a time; search and "Show more" appear once there are more
 
@@ -76,9 +79,9 @@ function PovLibrary() {
       <PageHeader title="Points of View"
         intro="The radar's conclusions: one Point of View per technology, written from its latest assessment."
         help={<>
-          <li>Newest first; click one to read it. Each card shows the headline, when it was written and when the
-            assessment it explains was made, and per fabric the priority (P1 act now to P6 just watch) and the
-            horizon (H1 near to H3 far). A fabric without one shows only its name.</li>
+          <li>Newest first; click one to read it. Each card shows the headline, when it was written and the
+            assessment it explains, and per fabric the priority and the horizon. A fabric without one shows only its
+            name.</li>
           <li>&ldquo;New since written&rdquo; counts pages collected about the technology after its Point of View
             was written.</li>
           <li>Technologies assessed but without a Point of View yet are counted at the top. The link opens them on
@@ -87,8 +90,12 @@ function PovLibrary() {
             traces back to the assessment and its source pages. Writing or rewriting one never changes the
             scores.</li>
           <li>Rewrite all writes every assessed technology&apos;s Point of View again from its latest assessment,
-            including those not written yet. It says how many before it starts.</li>
-        </>} />
+            including those not written yet, at about one model call each. It says how many before it starts.</li>
+          <li>Switched-off technologies are left out of the list and of Rewrite all; their Points of View stay on
+            their technology&apos;s page. Switching one back on brings it back.</li>
+        </>}>
+        <p className="mt-1 text-xs text-muted">Each fabric shows its priority and horizon. {LEGEND}</p>
+      </PageHeader>
 
       {error != null && <BackendError error={error} />}
 
@@ -130,7 +137,7 @@ function PovLibrary() {
                   <span className="text-[17px] font-semibold">{label(pv.technology)}</span>
                   <span className="text-xs text-neutral-500">
                     Written {formatDay(pv.composed_at)}
-                    {pv.assessed_at && ` · assessed ${formatDay(pv.assessed_at)}`} · version {pv.version}
+                    {pv.assessed_at && ` · from the ${formatDay(pv.assessed_at)} assessment`}
                   </span>
                   {(pv.new_since_written ?? 0) > 0 && (
                     <span className="rounded-full bg-azure/10 px-2 py-0.5 text-xs text-ink">
@@ -158,10 +165,12 @@ function PovLibrary() {
                       <span key={pl.fabric_id} className="inline-flex items-center gap-1">
                         <FabricLabel id={pl.fabric_id} name={pl.fabric} />
                         {pl.priority && (
-                          <span className={`px-1 py-0.5 font-mono text-[11px] ${PRIORITY[pl.priority] ?? "bg-neutral-100"}`}>
+                          <span className={`px-1 py-0.5 font-mono text-[11px] ${PRIORITY[pl.priority] ?? "bg-neutral-100"}`}
+                            title={pl.override ? `Set by a person (the scores give ${pl.computed_priority ?? "none"}): ${pl.override.reason ?? "no reason recorded"}` : undefined}>
                             {pl.priority}
                           </span>
                         )}
+                        {pl.override && <span className="text-[11px] text-amber-900">set by a person</span>}
                         {pl.horizon && <span className="font-mono text-[11px] text-neutral-500">{pl.horizon}</span>}
                       </span>
                     ))}
@@ -189,11 +198,18 @@ function PovLibrary() {
           )}
           {povs.length > 0 && data.assessed > 0 && (
             <div className="pt-1">
-              <ConfirmAction label="Rewrite all" secondary
-                question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology, from its latest assessment${waiting.length ? `, including the ${waiting.length} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
-                confirmLabel="Rewrite" disabled={running ? "Points of View are being written." : null}
+              <ConfirmAction label="Rewrite all" secondary cost={calls(data.assessed)}
+                question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology that's switched on, from its latest assessment${waiting.length ? `, including the ${waiting.length} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
+                confirmLabel="Rewrite" doneLabel="Started" disabled={running ? "Points of View are being written." : null}
                 onConfirm={async () => { await writePovs(true); await load(); }} />
             </div>
+          )}
+          {(data.switched_off ?? 0) > 0 && (
+            <p className="text-xs text-muted">
+              Left out: {plural(data.switched_off, "Point of View")} of switched-off technologies, which leaders
+              don&apos;t see and Rewrite all doesn&apos;t write.{" "}
+              <Link href="/admin/technologies?view=off" className="text-link hover:underline">See them →</Link>
+            </p>
           )}
         </div>
       )}

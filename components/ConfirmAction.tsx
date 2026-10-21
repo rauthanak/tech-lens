@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ApiError } from "@/lib/api";
+import { errorText } from "@/lib/api";
 
 /** A two-step button: the first click asks the question (with the cost of
- *  anything that uses the model), the second does it. `disabled` is the
- *  reason it can't start now, shown under the button. */
+ *  anything that uses the model), the second does it, then says so under the
+ *  button (`doneLabel`) until the next click, or says why it couldn't.
+ *  `disabled` is the reason it can't start now, shown under the button. */
 export default function ConfirmAction({
   label,
   cost,
   question,
   confirmLabel = "Start",
+  doneLabel = confirmLabel === "Start" ? "Started" : "Done",
   onConfirm,
   disabled,
   secondary = false,
@@ -19,6 +21,7 @@ export default function ConfirmAction({
   cost?: string;
   question: string;
   confirmLabel?: string;
+  doneLabel?: string; // "Started" for a job (it then shows on its own card), else "Done"
   onConfirm: () => Promise<unknown> | void;
   disabled?: string | null;
   secondary?: boolean;
@@ -26,6 +29,8 @@ export default function ConfirmAction({
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  if (done && disabled) setDone(false); // the job is under way: its own state takes over
 
   const confirm = async () => {
     setBusy(true);
@@ -33,8 +38,9 @@ export default function ConfirmAction({
     try {
       await onConfirm();
       setAsking(false);
+      setDone(true);
     } catch (e) {
-      setError(e instanceof ApiError && e.detail ? e.detail : "It couldn't start. Check that tech-atlas is running.");
+      setError(`${doneLabel === "Started" ? "It didn't start" : "Not done"}: ${errorText(e)}`);
     } finally {
       setBusy(false);
     }
@@ -60,14 +66,15 @@ export default function ConfirmAction({
   }
   return (
     <span className="inline-flex flex-col items-start gap-1">
-      <button type="button" onClick={() => setAsking(true)} disabled={!!disabled}
+      <button type="button" onClick={() => { setAsking(true); setDone(false); }} disabled={!!disabled}
         className={`rounded-full px-3.5 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
           secondary ? "border border-line bg-white text-ink hover:bg-ground"
             : "bg-navy text-white hover:bg-navy-strong"}`}>
         {label}
         {cost && <span className="opacity-75"> · {cost}</span>}
       </button>
-      {disabled && <span className="text-xs text-muted">{disabled}</span>}
+      {disabled ? <span className="text-xs text-muted">{disabled}</span>
+        : done && <span role="status" className="text-xs text-muted">{doneLabel}</span>}
     </span>
   );
 }

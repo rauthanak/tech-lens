@@ -4,6 +4,8 @@ import SetAsideList from "@/components/SetAsideList";
 import SignalListEditor from "@/components/SignalListEditor";
 import SignalSuggestions from "@/components/SignalSuggestions";
 
+const SUMMARY = "cursor-pointer text-sm font-medium text-link hover:underline";
+
 export default function SignalListPage() {
   return (
     <div>
@@ -20,14 +22,22 @@ export default function SignalListPage() {
           <li>Adding, editing, switching or deleting a row applies from the next collection and marks stored pages
             as not yet checked; Check again on Operations re-reads them, at about one model call per page.
             Reordering changes nothing.</li>
-          <li>Suggestions groups recent Other findings by their label: if one keeps coming back, add it to the
-            list. Set aside recently shows the pages the Can ignore rules set aside.</li>
+          <li>Below the list, two sections stay closed until opened: events from the last 30 days that fit no signal
+            on the list, grouped by the name the model gave them (if one keeps coming back, add it to the list); and
+            the pages a Can ignore rule set aside.</li>
         </>} />
       <Suspense>
         <SignalListEditor />
       </Suspense>
-      <SignalSuggestions />
-      <SetAsideList />
+      {/* long lists of cards, so each stays closed until asked for */}
+      <details className="mt-10">
+        <summary className={SUMMARY}>Show the events that fit no signal on the list (last 30 days)</summary>
+        <SignalSuggestions />
+      </details>
+      <details className="mt-6">
+        <summary className={SUMMARY}>Show the pages set aside by a Can ignore rule (last 30 days)</summary>
+        <SetAsideList />
+      </details>
     </div>
   );
 }

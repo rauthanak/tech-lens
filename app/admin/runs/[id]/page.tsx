@@ -5,11 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
 import Hood from "@/components/Hood";
+import ModelUse from "@/components/ModelUse";
 import PageHeader from "@/components/PageHeader";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import StatusChip from "@/components/StatusChip";
-import { ApiError, fetchJson, sendJson } from "@/lib/api";
-import { duration, formatTime } from "@/lib/format";
+import { errorText, fetchJson, sendJson } from "@/lib/api";
+import { duration, formatAt, formatDay, plural } from "@/lib/format";
 import { LIVE_DOT } from "@/lib/theme";
 
 /* ── data ──────────────────────────────────────────────────────────── */
@@ -67,8 +68,8 @@ type Run = {
     signals?: number; other_signals?: number; set_aside?: number;
   };
   sources: SourceStat[];
+  crawl_settings?: { pages_per_source?: number }; // as the collection ran
   used_in?: UsedIn[];
-  latest_activity?: { scoring_run_id: string; status: string; started_at: string } | null;
   assessments_before_upgrade?: number;
   analysis_errors?: { reason: string; detail: string; pages: number; sources: string[] }[];
 };
@@ -78,7 +79,7 @@ type NodeState = "done" | "active" | "failed" | "pending";
 
 /* ── stage copy (under the hood) ───────────────────────────────────── */
 
-const STAGES = ["orchestrating", "crawling", "resolving", "done"] as const;
+const STAGES = ["orchestrating", "crawling", "resolving", "classifying", "done"] as const;
 
 const STAGE_INFO: Record<string, {
   eyebrow: string; title: string; kind: Kind; box: string;
@@ -86,29 +87,36 @@ const STAGE_INFO: Record<string, {
 }> = {
   orchestrating: {
     eyebrow: "STAGE 1 · AGENT", title: "Planning", kind: "llm",
-    box: "Plan the run, divide the register by horizon",
-    blurb: "The orchestrator deep agent plans the run and divides the enabled register into one workload each for H1, H2 and H3. The fan-out itself is deterministic — every enabled source gets collected no matter what the agent decides.",
-    inn: "the enabled source register, run scope",
-    out: "a run plan — three horizon workloads",
+    box: "Plans which sources to read",
+    blurb: "A model plans the collection and splits the switched-on sources into three groups, one per horizon (H1, H2, H3). Every switched-on source is read whatever the plan says.",
+    inn: "the switched-on sources",
+    out: "three groups of sources, one per horizon",
   },
   crawling: {
-    eyebrow: "STAGE 2 · AGENTS × N", title: "Collecting", kind: "llm",
-    box: "Collect every enabled source, check each new page for signals",
-    blurb: "One supervisor per horizon partitions its slice into scout batches. A website is crawled (start pages and feeds → links → sitemap → headless browser); a data source runs its saved searches. Content-hash dedupe means an unchanged page is never paid for twice; each new page gets one model call — summary, technology tags, the scout's take, and the signals from the list.",
-    inn: "the three horizon workloads, the run's signal list",
-    out: "documents with summaries and signals",
+    eyebrow: "STAGE 2 · AGENTS", title: "Collecting", kind: "llm",
+    box: "Reads each source and each new page",
+    blurb: "Each group is read source by source. A website is crawled from its start pages and feeds, following links; a data source runs its saved searches. A page that hasn't changed since it was last read costs nothing; each new or changed page gets one model call, for its summary, the technologies it names and the events on the signal list.",
+    inn: "the three groups, and the signal list as the collection started",
+    out: "pages with their summaries and findings",
   },
   resolving: {
-    eyebrow: "STAGE 3 · CHAINED", title: "Organizing technologies", kind: "llm",
-    box: "Collapse raw tags into canonical technologies",
-    blurb: "Documents arrive tagged with raw strings; assessment needs one canonical name per technology. The resolver merges cheapest step first — deterministic normalization, then the pinned-alias skip, and only what's left reaches the model as merge-groups with the register passed in as fixed anchors. Pages set aside by a Can ignore rule are left out.",
-    inn: "raw technology strings from all documents",
-    out: "canonical technologies + stamped documents",
+    eyebrow: "STAGE 3 · ORGANIZE", title: "Merging names", kind: "llm",
+    box: "Merges duplicate technology names",
+    blurb: "Pages name the same technology in different ways. This step merges the spellings into one name per technology: first by plain rules (capitals, hyphens, spacing, names already known), then the model for what's left, without renaming technologies the radar already knows. Pages set aside by a Can ignore rule are left out.",
+    inn: "every technology name on the collected pages",
+    out: "one name per technology, with each page linked to it",
+  },
+  classifying: {
+    eyebrow: "STAGE 4 · CLASSIFY", title: "Judging evidence", kind: "llm",
+    box: "Judges each technology with new pages",
+    blurb: "One model call per technology with new pages: how solid its evidence is (independent sources, kinds of source and event, credibility), its domain and sub-domain, commercial availability, maturity (TRL), and whether it may be nascent. The step stops at its token limit (Setup › Settings) and says so.",
+    inn: "each technology's newest pages, those with findings first",
+    out: "for each technology, its judgement with reasons and pages",
   },
   done: {
     eyebrow: "OUTCOME", title: "Evidence", kind: "outcome",
-    box: "Summarized · signals called out · organized",
-    blurb: "The run's artifact: summarized, signal-checked and organized documents. Assessment reads this store whenever you choose to assess.",
+    box: "Pages read, events found, names merged",
+    blurb: "What the collection leaves behind: pages with their summaries and findings, filed under one name per technology. An assessment run reads them whenever you choose to assess.",
     inn: "everything above",
     out: "evidence, ready for assessment",
   },
@@ -116,24 +124,24 @@ const STAGE_INFO: Record<string, {
 
 const ORCH_SUBS: { id: string; title: string; kind: Kind; blurb: string }[] = [
   { id: "planning", title: "Planning", kind: "llm",
-    blurb: "The orchestrator agent reads the enabled register and drafts the run plan." },
-  { id: "dispatching", title: "Dispatching", kind: "free",
-    blurb: "The plan becomes per-horizon supervisor workloads — a deterministic fan-out, so no enabled source can be forgotten." },
+    blurb: "A model reads the list of switched-on sources and drafts the plan." },
+  { id: "dispatching", title: "Handing out", kind: "free",
+    blurb: "The plan becomes one group of sources per horizon, by fixed rules, so no switched-on source is left out." },
 ];
 
 const RESOLVE_PHASES: { id: string; title: string; kind: Kind; blurb: string }[] = [
-  { id: "gathering", title: "Gathering + clean", kind: "free",
-    blurb: "Collect every raw string from the documents (set-aside pages excluded) and apply the deterministic clean — case, hyphens and spacing merged at zero cost — plus the pinned-alias skip: anything the register already knows never returns to the model." },
+  { id: "gathering", title: "Gathering and tidying", kind: "free",
+    blurb: "Every technology name on the pages (set-aside pages left out), tidied by plain rules at no cost: capitals, hyphens and spacing. A name the radar already knows never goes to the model." },
   { id: "llm pass 1", title: "Model pass 1", kind: "llm",
-    blurb: "technology_resolve over the leftovers in alphabetical chunks: merge-groups only, with the established register as fixed anchors that new names fold into but never rename." },
+    blurb: "The model reads the remaining names in alphabetical batches and says which are the same technology. Technologies the radar already knows take in new spellings but are never renamed." },
   { id: "llm pass 2", title: "Model pass 2", kind: "llm",
-    blurb: "A second pass over the resulting canonicals by frequency, catching merges that straddled chunk boundaries." },
-  { id: "writing register", title: "Write register", kind: "free",
-    blurb: "Upsert canonical technologies and their aliases into the register — admin pins survive untouched." },
-  { id: "stamping documents", title: "Stamp documents", kind: "free",
-    blurb: "Stamp every document with its resolved canonical names and recompute per-technology stats." },
-  { id: "done", title: "Register updated", kind: "outcome",
-    blurb: "The technology register reflects this collection's pages." },
+    blurb: "A second pass over the merged names, most frequent first, catching pairs that fell into different batches." },
+  { id: "writing register", title: "Saving technologies", kind: "free",
+    blurb: "Each technology and its other spellings are saved. A name a person set stays as it is." },
+  { id: "stamping documents", title: "Linking pages", kind: "free",
+    blurb: "Each page is linked to the technologies it names, and each technology's page counts are worked out again." },
+  { id: "done", title: "Technologies updated", kind: "outcome",
+    blurb: "The radar's technologies now reflect this collection's pages." },
 ];
 
 /* ── state derivation ──────────────────────────────────────────────── */
@@ -306,8 +314,23 @@ const ACCESS_ICON: Record<string, { icon: string; title: string }> = {
 
 /** The per-source table, grouped by horizon — scales to hundreds of
  *  sources. Rows open the documents the source gave in this run. */
-function SourcesTable({ run, runId, parent, running, access }: {
+/** A source's note, in words: why it stopped, or why it gave nothing. A
+ *  website's stored note reads "didn't finish: 250 links left". */
+function sourceNote(s: SourceStat, how: string, budget?: number): string | null {
+  if (s.incomplete_note) {
+    const left = s.incomplete_note.match(/^didn't finish: (\d+) links? left$/);
+    if (!left) return s.incomplete_note;
+    const links = `${plural(Number(left[1]), "link")} not visited`;
+    return budget && s.pages_visited >= budget ? `Stopped at its page budget of ${budget}; ${links}` : links;
+  }
+  if (how === "query" && s.source_end_date_time && !s.error && s.documents === 0)
+    return "No new results from its saved searches";
+  return null;
+}
+
+function SourcesTable({ run, runId, parent, running, access, horizons }: {
   run: Run; runId: string; parent: NodeState; running: boolean; access: Record<string, string>;
+  horizons: Record<string, string>;
 }) {
   const router = useRouter();
   if (run.sources.length === 0)
@@ -337,13 +360,14 @@ function SourcesTable({ run, runId, parent, running, access }: {
           {[...groups.entries()].map(([category, sources]) => (
             <Fragment key={category}>
               <tr className="bg-ground">
-                <td colSpan={5} className="px-4 py-1.5 font-mono text-[10px] font-semibold tracking-[.14em]">
-                  {category} · {sources.length} SOURCE{sources.length === 1 ? "" : "S"}
+                <td colSpan={5} className="px-4 py-1.5 text-xs font-semibold">
+                  {horizons[category] ? `${horizons[category]} (${category})` : category} · {plural(sources.length, "source")}
                 </td>
               </tr>
               {sources.map((s) => {
                 const st = sourceState(s, parent);
                 const how = ACCESS_ICON[access[s.source_id] ?? "crawl"];
+                const note = sourceNote(s, access[s.source_id] ?? "crawl", run.crawl_settings?.pages_per_source);
                 return (
                   <tr
                     key={s.source_id}
@@ -356,11 +380,6 @@ function SourcesTable({ run, runId, parent, running, access }: {
                         {s.source_name}
                         {st === "done" && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-neutral-200 text-[8px] font-bold text-muted">✓</span>}
                         {st === "failed" && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-failed-dot text-[8px] font-bold text-ink">✕</span>}
-                        {s.incomplete && (
-                          <span className="bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] font-normal uppercase">
-                            ◐ Didn&apos;t finish
-                          </span>
-                        )}
                       </div>
                       <div className="pl-6 font-mono text-xs text-faint">{s.source_url}</div>
                     </td>
@@ -372,10 +391,10 @@ function SourcesTable({ run, runId, parent, running, access }: {
                     <td className="px-4 py-2.5 font-mono text-xs">
                       {duration(s.source_start_date_time, s.source_end_date_time)}
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-xs">
+                    <td className="px-4 py-2.5 text-xs">
                       {s.error && <span className="block text-failed">{s.error}</span>}
-                      {s.incomplete_note && <span className="block">{s.incomplete_note}</span>}
-                      {!s.error && !s.incomplete_note && !s.source_end_date_time && (
+                      {note && <span className="block">{note}</span>}
+                      {!s.error && !note && !s.source_end_date_time && (
                         <span className="inline-flex items-center gap-1.5"><span className={LIVE_DOT} />in progress</span>
                       )}
                     </td>
@@ -433,6 +452,7 @@ export default function RunDetailPage() {
   const [path, setPath] = useState<string | null>(null); // drilled stage id, or null = top level
   const [selected, setSelected] = useState<string | null>(null); // node id within current level
   const [access, setAccess] = useState<Record<string, string>>({});
+  const [horizons, setHorizons] = useState<Record<string, string>>({}); // "H1" → "Already on the market"
   const runningRef = useRef(false);
 
   const load = useCallback((silent = false) => {
@@ -450,8 +470,11 @@ export default function RunDetailPage() {
 
   useEffect(() => {
     load();
-    fetchJson<{ sources: { source_id: string; access?: string }[] }>("/api/sources")
-      .then((d) => setAccess(Object.fromEntries(d.sources.map((s) => [s.source_id, s.access ?? "crawl"]))))
+    fetchJson<{ horizons: Record<string, { label?: string }>; sources: { source_id: string; access?: string }[] }>("/api/sources")
+      .then((d) => {
+        setAccess(Object.fromEntries(d.sources.map((s) => [s.source_id, s.access ?? "crawl"])));
+        setHorizons(Object.fromEntries(Object.entries(d.horizons).map(([h, m]) => [h, m.label ?? h])));
+      })
       .catch(() => {});
     const timer = setInterval(() => load(true), REFRESH_IDLE_MS);
     const fast = setInterval(() => {
@@ -466,7 +489,7 @@ export default function RunDetailPage() {
       await sendJson(`/api/runs/${id}/terminate`, "POST", {});
       load(true);
     } catch (e) {
-      setTerminateError(e instanceof ApiError ? (e.detail ?? e.message) : "failed");
+      setTerminateError(errorText(e));
     }
   }
 
@@ -553,7 +576,7 @@ export default function RunDetailPage() {
             <DetailHeader eyebrow="PLANNING · SUB-STAGE" title={s.title} kind={s.kind} state={st.state}
               timing={st.start && st.end ? duration(st.start, st.end) : undefined} />
             <p className="mt-4 max-w-4xl text-[14px] leading-relaxed">{s.blurb}</p>
-            {st.start && <p className="mt-3 font-mono text-xs text-muted">started {formatTime(st.start)}</p>}
+            {st.start && <p className="mt-3 font-mono text-xs text-muted">started {formatAt(st.start)}</p>}
           </div>
         );
       }
@@ -569,13 +592,13 @@ export default function RunDetailPage() {
         const st = eventStates(RESOLVE_PHASES, events, parent)[s.id];
         return (
           <div>
-            <DetailHeader eyebrow="ORGANIZING · PASS" title={s.title} kind={s.kind}
+            <DetailHeader eyebrow="MERGING NAMES · PASS" title={s.title} kind={s.kind}
               state={run.resolve ? st.state : "pending"}
               timing={st.start && st.end ? duration(st.start, st.end) : undefined} />
             <p className="mt-4 max-w-4xl text-[14px] leading-relaxed">{s.blurb}</p>
             {run.resolve && s.kind === "llm" && (
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Stat label="MODEL CALLS (WHOLE RESOLVE)" value={run.resolve.llm_calls} />
+                <Stat label="MODEL CALLS (WHOLE STEP)" value={run.resolve.llm_calls} />
               </div>
             )}
           </div>
@@ -587,7 +610,7 @@ export default function RunDetailPage() {
     if (stage && STAGE_INFO[stage]) {
       const info = STAGE_INFO[stage];
       const t = stageTimes(run, stage);
-      const timing = t.start ? (t.end ? duration(t.start, t.end) : `since ${formatTime(t.start)}`) : undefined;
+      const timing = t.start ? (t.end ? duration(t.start, t.end) : `since ${formatAt(t.start)}`) : undefined;
       return (
         <div>
           <DetailHeader eyebrow={info.eyebrow} title={info.title} kind={info.kind} state={states[stage]} timing={timing} />
@@ -599,7 +622,7 @@ export default function RunDetailPage() {
               <div className="mt-2 flex flex-col gap-1">
                 {(run.substage_history ?? []).filter((e) => e.stage === "crawling").map((e, i) => (
                   <div key={i} className="flex items-baseline gap-3 font-mono text-xs">
-                    <span className="text-faint">{formatTime(e.at)}</span>
+                    <span className="text-faint">{formatAt(e.at)}</span>
                     <span>{e.substage}</span>
                   </div>
                 ))}
@@ -621,8 +644,8 @@ export default function RunDetailPage() {
       <div>
         <DetailHeader eyebrow="TECHNICAL DETAILS" title="How this collection worked" />
         <p className="mt-4 max-w-4xl text-[14px] leading-relaxed">
-          Blue boxes spend model calls; outlined boxes are deterministic and free. Click a stage on
-          the left to see its detail, or drill into planning and organizing.
+          Blue boxes use model calls; outlined boxes follow fixed rules and cost nothing. Click a stage on
+          the left to see its detail, or open planning and merging names for their steps.
         </p>
         {(run.stage_history?.length ?? 0) > 0 && (
           <div className="mt-5 border-t border-dashed border-line pt-3">
@@ -630,7 +653,7 @@ export default function RunDetailPage() {
             <div className="mt-2 flex flex-col gap-1">
               {run.stage_history!.map((h, i) => (
                 <div key={i} className="flex items-baseline gap-3 font-mono text-xs">
-                  <span className="text-faint">{formatTime(h.at)}</span>
+                  <span className="text-faint">{formatAt(h.at)}</span>
                   <span>{STAGE_INFO[h.stage]?.title ?? h.stage}</span>
                 </div>
               ))}
@@ -649,17 +672,18 @@ export default function RunDetailPage() {
     <div>
       <PageHeader
         eyebrow="Collection"
-        title={`Collection ${id}`}
+        title={run ? `Collection · ${formatDay(run.run_start_date_time)}` : "Collection"}
         intro="What one collection fetched, what it found, and where its pages were used."
         help={<>
           <li>The three cards follow the collection: pages visited, saved and new or changed; the findings on those
-            pages, as of the collection (See its findings opens them on the Briefing); then the technologies after
-            organizing.</li>
+            pages, as of the collection (See its findings opens them on the Briefing); then the Organize step, which
+            merges different spellings of the same technology into one name, across every page collected so far.</li>
           <li>Used in: the assessment runs that read this collection&apos;s pages, and the Points of View built from
             them.</li>
-          <li>Sources: one row per source, grouped by horizon (H1–H3, see Setup → Sources). ◐ Didn&apos;t finish
-            means pages were left: a website reached its page limit, or a data source has results still to
-            collect, which the next collection picks up. Click a source for its pages.</li>
+          <li>Sources: one row per source, grouped by horizon (see Setup › Sources). The note says why a source
+            stopped: a website is read up to its page budget, most promising links first, so some links are not
+            visited; a data source with results still to collect carries on at the next collection. Click a source
+            for its pages.</li>
           <li>Pages that couldn&apos;t be analysed are listed in red with the reason; Check again on Operations
             retries them.</li>
           <li>Terminate stops a running collection and keeps what it has collected. The Technical details switch
@@ -680,16 +704,21 @@ export default function RunDetailPage() {
         {run && (
           <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
             <StatusChip status={run.status} />
-            <span>started {formatTime(run.run_start_date_time)}</span>
-            <span>ended {formatTime(run.run_end_date_time)}</span>
+            <span>started {formatAt(run.run_start_date_time)}</span>
+            <span>ended {formatAt(run.run_end_date_time)}</span>
             <span>took {duration(run.run_start_date_time, run.run_end_date_time)}</span>
-            <button onClick={() => load()} title="Refresh"
-              className="rounded-full border border-line bg-white px-2 py-0.5 text-sm hover:bg-neutral-100">⟳</button>
-            <span className="font-mono text-xs text-neutral-500">
-              refreshed {refreshedAt ? formatTime(refreshedAt.toISOString()) : "—"}
-            </span>
+            {running && <>
+              <button onClick={() => load()} title="Refresh now"
+                className="rounded-full border border-line bg-white px-2 py-0.5 text-sm hover:bg-neutral-100">⟳</button>
+              <span className="text-xs text-neutral-500">
+                refreshed {refreshedAt ? formatAt(refreshedAt.toISOString()) : "—"}
+              </span>
+            </>}
+            <Hood><span className="font-mono text-xs text-neutral-500">collection {id}</span></Hood>
           </p>
         )}
+        {run && <ModelUse runIds={[id, ...(run.resolve_id ? [run.resolve_id] : [])]} startedAt={run.run_start_date_time}
+          refresh={refreshedAt} />}
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
@@ -705,26 +734,33 @@ export default function RunDetailPage() {
           {/* 1 · the three steps this run went through */}
           <div className="mt-6 flex flex-wrap gap-3">
             <StepCard step={1} title="Collect">
-              <Figures items={[["sources", totals.sources], ["pages visited", totals.pages_visited],
-                ["pages saved", totals.documents], ["new or changed", totals.new_documents]]} />
+              <Figures items={[["sources", totals.sources.toLocaleString()], ["pages visited", totals.pages_visited.toLocaleString()],
+                ["pages saved", totals.documents.toLocaleString()], ["new or changed", totals.new_documents.toLocaleString()]]} />
             </StepCard>
             <StepCard step={2} title="Findings" href={`/admin?run=${id}`}
               linkText="See its findings on the Briefing">
-              {signalsKnown ? (
-                <Figures items={[["on your list", totals.signals ?? 0], ["other", totals.other_signals ?? 0],
-                  ["set aside", totals.set_aside ?? 0]]} />
-              ) : (
+              {signalsKnown ? (<>
+                <Figures items={[["match the signal list", (totals.signals ?? 0).toLocaleString()],
+                  ["match no signal", (totals.other_signals ?? 0).toLocaleString()]]} />
+                <p className="mt-2 text-xs text-neutral-600">
+                  {plural(totals.set_aside ?? 0, "page")} set aside: nothing worth keeping
+                </p>
+              </>) : (
                 <p className="text-neutral-500">— (this collection predates signals)</p>
               )}
             </StepCard>
-            <StepCard step={3} title="Organize" href="/admin/technologies" linkText="Review technologies">
-              {run.resolve ? (
-                <Figures items={[["status", <span key="s" className="text-sm font-medium">{run.resolve.status}</span>],
-                  ["technologies", String(run.resolve.technologies ?? "—")]]} />
-              ) : states.resolving === "pending" || running ? (
-                <p className="text-neutral-500">Runs after collecting finishes.</p>
+            <StepCard step={3} title="Organize: merge names" href="/admin/technologies" linkText="Review technologies">
+              {run.resolve?.status === "completed" ? (
+                <p>
+                  Merged {Number(run.resolve.raw_strings ?? 0).toLocaleString()} names, from every page collected so
+                  far; the radar then knew {Number(run.resolve.technologies ?? 0).toLocaleString()} technologies.
+                </p>
+              ) : run.resolve?.status === "failed" ? (
+                <p className="text-failed">Didn&apos;t finish{run.resolve.error ? `: ${run.resolve.error}` : "."}</p>
+              ) : run.resolve || states.resolving === "pending" || running ? (
+                <p className="text-neutral-500">{run.resolve ? "Merging names…" : "Runs after collecting finishes."}</p>
               ) : (
-                <p className="text-neutral-500">Skipped: another organize was running.</p>
+                <p className="text-neutral-500">Skipped: another merge of names was running.</p>
               )}
             </StepCard>
           </div>
@@ -737,8 +773,9 @@ export default function RunDetailPage() {
                 {used.map((u) => (
                   <li key={u.scoring_run_id}>
                     Used in assessments of <b>{u.technologies}</b> technolog{u.technologies === 1 ? "y" : "ies"}{" "}
-                    (<Link href={`/admin/scoring/assessments/${u.scoring_run_id}`} className="text-link underline underline-offset-4">
-                      assessment run {u.scoring_run_id}</Link>, {formatTime(u.started_at)}).
+                    in the <Link href={`/admin/scoring/assessments/${u.scoring_run_id}`} className="text-link underline underline-offset-4">
+                      assessment run of {formatAt(u.started_at)}</Link>
+                    <Hood><span className="ml-1 font-mono text-xs text-neutral-500">{u.scoring_run_id}</span></Hood>.
                     {u.povs > 0 && <> {u.povs} Point{u.povs === 1 ? "" : "s"} of View built from them.</>}
                   </li>
                 ))}
@@ -755,19 +792,12 @@ export default function RunDetailPage() {
                 Not recorded for assessments before the upgrade ({run.assessments_before_upgrade} of them).
               </p>
             )}
-            {run.latest_activity && (
-              <p className="mt-3 border-t border-neutral-100 pt-2 text-xs text-neutral-500">
-                <span className="font-mono uppercase tracking-wider">Latest workspace activity:</span>{" "}
-                assessment run {run.latest_activity.scoring_run_id} started {formatTime(run.latest_activity.started_at)}.
-                This is timing only — it doesn&apos;t mean this collection&apos;s pages were used.
-              </p>
-            )}
           </section>
 
           {/* 3 · per source */}
           <section className="mt-6">
             <h2 className="text-lg font-semibold">Sources</h2>
-            <SourcesTable run={run} runId={id} parent={states.crawling} running={running} access={access} />
+            <SourcesTable run={run} runId={id} parent={states.crawling} running={running} access={access} horizons={horizons} />
             {(run.analysis_errors?.length ?? 0) > 0 && (
               <div className="mt-4 rounded-card border border-failed/40 bg-failed/5 px-4 py-3">
                 <h3 className="text-sm font-semibold text-failed">Pages that couldn&apos;t be analysed</h3>

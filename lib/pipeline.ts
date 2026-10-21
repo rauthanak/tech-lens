@@ -45,7 +45,11 @@ export type Pipeline = {
     recheck: (Job & { found: number; other: number; set_aside: number;
       failed_reasons: Record<string, number> }) | null;
   };
-  technologies: { count: number; resolve_status: string | null; resolved_at: string | null };
+  technologies: { count: number; resolve_status: string | null; resolved_at: string | null;
+    new_names?: number | null }; // how many new names the last Organize looked at
+  classify?: { status: string; pending: number; run_id?: string; done?: number; total?: number; finished_at?: string | null;
+    stopped_reason?: string | null; failed?: number; error?: string | null;
+    unchanged?: number }; // of `done`, how many the last run found nothing new for
   assess: {
     status: string; // none | running | terminating | completed | failed | terminated
     techs_with_new_evidence: number;
@@ -66,6 +70,7 @@ export const STAGE_WORDS: Record<string, string> = {
   orchestrating: "Planning",
   crawling: "Collecting",
   resolving: "Organizing technologies",
+  classifying: "Classifying technologies",
   done: "Done",
   preparing: "Preparing",
   scoring: "Assessing",

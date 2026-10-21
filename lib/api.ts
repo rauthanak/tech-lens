@@ -26,10 +26,11 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, `HTTP ${response.status}`, detail);
 }
 
-export async function fetchJson<T>(url: string): Promise<T> {
+/** One call to the API: a network failure or an error status throws an ApiError. */
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, init);
   } catch {
     throw new ApiError(null, "network");
   }
@@ -37,24 +38,25 @@ export async function fetchJson<T>(url: string): Promise<T> {
   return response.json();
 }
 
-export async function sendJson<T>(
-  url: string,
-  method: "POST" | "PUT" | "DELETE",
-  body?: unknown
-): Promise<T> {
-  let response: Response;
+/** The browser's time zone, sent with every write: the API records it beside
+ *  the time, and screens show the time in the zone it was written in. */
+export function browserTz(): string {
   try {
-    response = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
   } catch {
-    throw new ApiError(null, "network");
+    return "";
   }
-  if (!response.ok) throw await toApiError(response);
-  return response.json();
 }
+
+export const fetchJson = <T>(url: string) => request<T>(url);
+
+export const sendJson = <T>(url: string, method: "POST" | "PUT" | "DELETE", body?: unknown) =>
+  request<T>(url, { method, headers: { "Content-Type": "application/json", "X-Time-Zone": browserTz() },
+    body: body === undefined ? undefined : JSON.stringify(body) });
+
+/** A file upload (multipart), with the same time zone header as sendJson. */
+export const sendForm = <T>(url: string, form: FormData) =>
+  request<T>(url, { method: "POST", headers: { "X-Time-Zone": browserTz() }, body: form });
 
 /** A human explanation of what went wrong and what to do about it. */
 export function explain(error: unknown): { title: string; hint: string } {
@@ -70,6 +72,9 @@ export function explain(error: unknown): { title: string; hint: string } {
     hint: "Check the tech-atlas terminal for the traceback.",
   };
 }
+
+/** Why a request failed, in words: the API's own reason when it gave one. */
+export const errorText = (e: unknown) => (e instanceof ApiError && e.detail ? e.detail : explain(e).title);
 
 /** Tell listeners (the top bar's Changes count) that configuration was saved. */
 export const CONFIG_CHANGED = "tech-lens:config-changed";

@@ -7,9 +7,11 @@ import ConfirmAction from "@/components/ConfirmAction";
 import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
 import { calls, startAssessment } from "@/lib/actions";
-import { fetchJson, sendJson } from "@/lib/api";
-import { formatTime, plural } from "@/lib/format";
-import { blockedReason, refreshPipeline, stageWord, usePipeline } from "@/lib/pipeline";
+import { errorText, fetchJson } from "@/lib/api";
+import { formatAt, plural } from "@/lib/format";
+import type { GateItem } from "@/lib/gates";
+import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
+import { useTechLabel } from "@/lib/tech-labels";
 
 type ScoringRun = {
   _id: string;
@@ -23,36 +25,36 @@ type ScoringRun = {
   error?: string | null;
 };
 
-type Preview = { technologies: number; calls: number; calls_max: number };
+/** Gate 1's "ready to assess": the evidence verdict decides it, and the page
+ *  floor only for technologies not classified yet (services/radar_status). */
+type Ready = { count: number; calls: number; tech_ids: string[] };
 
 export default function AssessmentsPage() {
   const p = usePipeline();
+  const label = useTechLabel();
   const [runs, setRuns] = useState<ScoringRun[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [minDocs, setMinDocs] = useState("3");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const floor = Math.max(1, Number(minDocs) || 1);
+  const [ready, setReady] = useState<Ready | null>(null);
+  const [readyError, setReadyError] = useState<string | null>(null);
+  const [floor, setFloor] = useState<number | null>(null);
 
-  // live preview: how many technologies clear the floor, and about what it costs
-  useEffect(() => {
-    const t = setTimeout(() => {
-      fetchJson<Preview>(`/api/scoring/preview?min_docs=${floor}`).then(setPreview).catch(() => setPreview(null));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [floor]);
-
-  // the list reloads when the latest assessment run moves on
-  const latest = p ? `${p.assess.scoring_run_id}:${p.assess.status}:${p.assess.techs_done}` : "";
+  // the list, and what's ready, reload when the latest assessment run or a classification moves on
+  const latest = p ? `${p.assess.scoring_run_id}:${p.assess.status}:${p.assess.techs_done}:${p.classify?.status}` : "";
   useEffect(() => {
     fetchJson<{ scoring_runs: ScoringRun[] }>("/api/scoring/runs")
       .then((d) => setRuns(d.scoring_runs))
       .catch(setError);
+    fetchJson<{ gate1: GateItem[] }>("/api/gates")
+      .then((g) => {
+        const item = g.gate1.find((i) => i.kind === "ready_to_assess") as (GateItem & { tech_ids?: string[] }) | undefined;
+        setReady({ count: item?.count ?? 0, calls: item?.calls ?? 0, tech_ids: item?.tech_ids ?? [] });
+        setReadyError(null);
+      })
+      .catch((e) => setReadyError(errorText(e)));
   }, [latest]);
-
-  async function start() {
-    await sendJson("/api/scoring/runs", "POST", { min_docs: floor });
-    await refreshPipeline();
-  }
+  useEffect(() => {
+    fetchJson<{ evidence_floor: number }>("/api/settings/radar").then((r) => setFloor(r.evidence_floor)).catch(() => {});
+  }, []);
 
   const blocked = blockedReason(p, "assess");
   const toAssess = p?.for_analyst.find((i) => i.kind === "assess");
@@ -63,11 +65,14 @@ export default function AssessmentsPage() {
         intro="Every assessment run: a batch of technologies scored together. Start one here."
         help={<>
           <li>An assessment scores a technology in each fabric it touches, on twelve measures from 0 to 10, using
-            every page linked to it. It costs about 14 to 50 model calls per technology, depending on how many
-            fabrics it touches; each button shows its estimate and asks before starting.</li>
-          <li>Run one for every technology with at least a given number of pages, or assess the technologies that
-            have new pages since their last assessment. One technology can also be assessed from its own
-            page.</li>
+            every page linked to it. It makes one model call for the technology and one for each fabric it touches
+            (combined calls, set in Setup › Weights &amp; Grid); each button shows its estimate and asks before
+            starting.</li>
+          <li>Run one for the technologies ready to assess, or for those with new pages since their last assessment.
+            Ready means its evidence was judged good enough, or a person confirmed it as possibly nascent (too new
+            to have much evidence); a technology not judged yet is ready once it has enough pages (Setup ›
+            Settings). Any one technology can also be assessed from its own page, or several from the Technologies
+            list.</li>
           <li>A run uses the scoring method as it stands when it starts; edits made during a run wait for the next
             one.</li>
           <li>Each row shows the run&apos;s status, some of its technologies, how many are done and the model calls
@@ -85,25 +90,29 @@ export default function AssessmentsPage() {
         </div>
       )}
 
-      <div className="mt-5 flex flex-wrap items-end gap-4 rounded-card border border-line bg-white px-5 py-4">
-        <label className="text-sm">
-          Pages per technology, at least
-          <span className="ml-2 text-xs text-neutral-500">every technology with that many is assessed</span>
-          <input
-            className="mt-1 block w-28 rounded border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
-            type="number" min="1" value={minDocs} onChange={(e) => setMinDocs(e.target.value)} />
-        </label>
-        <ConfirmAction label="Run assessment" cost={preview ? calls(preview.calls) : undefined}
-          question={preview
-            ? `Assess ${plural(preview.technologies, "technology", "technologies")} with at least ${plural(floor, "page")}? About ${plural(preview.calls, "model call")} (up to ${preview.calls_max}).`
-            : "Start an assessment run?"}
-          disabled={blocked ?? (preview?.technologies === 0 ? "No technology has that many pages." : null)}
-          onConfirm={start} />
-        {preview && (
-          <span className="pb-2 text-xs text-neutral-600">
-            {plural(preview.technologies, "technology qualifies", "technologies qualify")} · {calls(preview.calls)} (up to {preview.calls_max})
-          </span>
-        )}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-card border border-line bg-white px-5 py-4 text-sm">
+        <div className="min-w-0 flex-1 basis-96">
+          {readyError ? <p className="text-failed">What&apos;s ready to assess didn&apos;t load: {readyError}</p> : ready && (
+            ready.count > 0 ? (
+              <p>
+                <Link href="/admin/technologies?view=not_assessed&status=ready" className="hover:underline">
+                  {plural(ready.count, "technology is", "technologies are")} ready to assess →</Link>
+              </p>
+            ) : (
+              <p>Nothing is ready to assess. The next collection may add some, or confirm possibly nascent ones on the
+                Briefing.</p>
+            )
+          )}
+          <p className="mt-0.5 text-xs text-muted">
+            Ready means its evidence was judged good enough, or a person confirmed it as possibly nascent. A
+            technology not judged yet is ready once it has {floor ? plural(floor, "page") : "enough pages"} (
+            <Link href="/admin/sources/settings" className="text-link hover:underline">Settings</Link>).
+          </p>
+        </div>
+        <ConfirmAction label={ready?.count === 1 ? "Assess it" : "Assess them"} cost={ready ? calls(ready.calls) : undefined}
+          question={`Assess ${plural(ready?.count ?? 0, "technology", "technologies")} ready to assess? About ${plural(ready?.calls ?? 0, "model call")}: one for each technology and one for each fabric it touches.`}
+          disabled={blocked ?? (!ready?.count ? "Nothing is ready to assess." : null)}
+          onConfirm={() => startAssessment(ready!.tech_ids)} />
       </div>
 
       {runs && (
@@ -120,13 +129,13 @@ export default function AssessmentsPage() {
               )}
               <span className="min-w-0 flex-1 truncate text-sm">
                 {r.technologies.length <= 3
-                  ? r.technologies.map((t) => t.name).join(", ")
-                  : `${r.technologies.slice(0, 3).map((t) => t.name).join(", ")} +${r.technologies.length - 3} more`}
+                  ? r.technologies.map((t) => label(t.name)).join(", ")
+                  : `${r.technologies.slice(0, 3).map((t) => label(t.name)).join(", ")} and ${(r.technologies.length - 3).toLocaleString()} more`}
               </span>
               <span className="text-xs tabular-nums text-neutral-600">
                 {r.progress.techs_done} of {plural(r.progress.techs_total, "technology", "technologies")} ·{" "}
                 {plural(r.progress.llm_calls, "model call")}
-                {r.finished_at ? ` · finished ${formatTime(r.finished_at)}` : ` · started ${formatTime(r.started_at)}`}
+                {r.finished_at ? ` · finished ${formatAt(r.finished_at)}` : ` · started ${formatAt(r.started_at)}`}
               </span>
             </Link>
           ))}

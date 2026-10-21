@@ -23,7 +23,7 @@ type SourceRow = {
 
 type AdapterInfo = { name: string; label: string };
 
-const ACCESS_LABELS: Record<string, string> = { crawl: "Website", query: "Data source", none: "Never" };
+const ACCESS_LABELS: Record<string, string> = { crawl: "Website", query: "Data source", none: "Not collected" };
 const accessOf = (s: SourceRow) => s.access ?? "crawl";
 
 /** "{n} still to collect" / "too broad" for a data source with a backlog. */
@@ -39,14 +39,33 @@ type SourcesResponse = {
   sources: SourceRow[];
 };
 
-const COST_LABELS: Record<string, string> = {
+export const COST_LABELS: Record<string, string> = {
   free: "Free",
-  free_tier: "Free tier",
-  licensed: "Licensed",
+  free_tier: "Free up to a limit",
+  licensed: "Paid subscription",
 };
 
 const pretty = (s: string) =>
   s.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+
+// readable names for the kinds of source (the stored cluster ids); one not
+// named here shows its id in words
+const CLUSTER_NAMES: Record<string, string> = {
+  analysts_trade_press: "Analysts and trade press",
+  company_filings: "Company filings",
+  conferences: "Conferences",
+  corporate_research_vendor_events: "Corporate research and vendor events",
+  government_funding: "Government funding",
+  patents: "Patents",
+  preprints_journals: "Preprints and journals",
+  standards_foundations: "Standards bodies and foundations",
+  talent: "Hiring",
+  university_labs: "University labs",
+  vc_startup_developer: "VC, startups and developers",
+  web_search: "Web search",
+};
+/** A kind of source in words: "VC, startups and developers". */
+export const clusterName = (id: string) => CLUSTER_NAMES[id] ?? pretty(id);
 
 type SortKey = "name" | "cluster" | "cost" | "enabled";
 type Sort = { key: SortKey; dir: 1 | -1 } | null;
@@ -54,6 +73,7 @@ type Sort = { key: SortKey; dir: 1 | -1 } | null;
 const sortValue = (s: SourceRow, key: SortKey): string | number => {
   if (key === "enabled") return s.enabled ? 1 : 0;
   if (key === "cost") return COST_LABELS[s.cost] ?? s.cost;
+  if (key === "cluster") return clusterName(s.cluster).toLowerCase();
   return s[key].toLowerCase();
 };
 
@@ -62,8 +82,8 @@ export const filterSegment = (
 ) =>
   `px-3 py-1.5 ${active ? "bg-navy font-medium text-white" : "hover:bg-neutral-100"}`;
 
-/** The source register list with search, horizon/cost/enabled filters and
- * sortable columns — shared by the reader (/) and admin (/admin/sources)
+/** Every source the radar knows, with search, horizon/cost/enabled filters
+ * and sortable columns — shared by the reader (/) and admin (/admin/sources)
  * endpoints. */
 export default function SourceBrowser() {
   const router = useRouter();
@@ -72,7 +92,8 @@ export default function SourceBrowser() {
   const [query, setQuery] = useState("");
   const [horizon, setHorizon] = useState<string>("all");
   const [cost, setCost] = useState<string>("all");
-  const [enabled, setEnabled] = useState<string>("all");
+  // opens on the sources a collection visits; the rest are one click away
+  const [enabled, setEnabled] = useState<string>("on");
   const [access, setAccess] = useState<string>("all");
   const [sort, setSort] = useState<Sort>(null);
   const [adapters, setAdapters] = useState<Record<string, string>>({});
@@ -103,7 +124,7 @@ export default function SourceBrowser() {
         (!q ||
           s.name.toLowerCase().includes(q) ||
           s.source_id.toLowerCase().includes(q) ||
-          s.cluster.toLowerCase().includes(q))
+          clusterName(s.cluster).toLowerCase().includes(q))
     );
   }, [data, query, horizon, cost, enabled, access]);
 
@@ -145,15 +166,14 @@ export default function SourceBrowser() {
         <>
           <p className="mt-4 text-sm text-muted">
             {data.sources.length} sources · {data.sources.filter((x) => x.enabled).length} switched on ·{" "}
-            {["H1", "H2", "H3"].map((h) => `${h} ${data.sources.filter((x) => x.horizon === h).length}`).join(" · ")} ·{" "}
-            {data.sources.filter((x) => x.cost !== "licensed").length} free ·{" "}
+            {data.sources.filter((x) => x.cost !== "licensed").length} free,{" "}
             {data.sources.filter((x) => x.cost === "licensed").length} paid
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name or cluster…"
+              placeholder="Search name or kind of source…"
               className="w-64 rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
             />
             <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
@@ -180,9 +200,9 @@ export default function SourceBrowser() {
             </div>
             <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
               {[
+                ["on", "Switched on"],
+                ["off", "Switched off"],
                 ["all", "All"],
-                ["on", "Enabled"],
-                ["off", "Disabled"],
               ].map(([value, label]) => (
                 <button
                   key={value}
@@ -194,7 +214,7 @@ export default function SourceBrowser() {
               ))}
             </div>
             <div className="flex overflow-hidden rounded border border-neutral-300 bg-white text-sm">
-              {[["all", "All"], ["crawl", "Website"], ["query", "Data source"], ["none", "Never"]].map(([value, label]) => (
+              {[["all", "All"], ["crawl", "Website"], ["query", "Data source"], ["none", "Not collected"]].map(([value, label]) => (
                 <button key={value} onClick={() => setAccess(value)} className={filterSegment(access === value)}>
                   {label}
                 </button>
@@ -203,6 +223,11 @@ export default function SourceBrowser() {
             <span className="font-mono text-xs text-neutral-500">
               {filtered.length} of {data.sources.length}
             </span>
+            {enabled === "on" && (
+              <button type="button" onClick={() => setEnabled("all")} className="text-sm text-link hover:underline">
+                Show all {data.sources.length}
+              </button>
+            )}
           </div>
 
           {(horizon === "all" ? ["H1", "H2", "H3"] : [horizon]).map((h) => {
@@ -213,7 +238,7 @@ export default function SourceBrowser() {
               <section key={h} className="mt-8">
                 <div className="flex items-baseline gap-3">
                   <h2 className="text-lg font-semibold">
-                    {h} — {meta?.label ?? h}
+                    {h} · {meta?.label ?? h}
                   </h2>
                   <span className="text-xs text-neutral-500">{meta?.meaning}</span>
                 </div>
@@ -222,11 +247,10 @@ export default function SourceBrowser() {
                     <thead>
                       <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                         <SortHeader label="Source" k="name" />
-                        <th className="px-4 py-2.5 font-medium">Horizon</th>
                         <th className="px-4 py-2.5 font-medium">How it&apos;s read</th>
-                        <SortHeader label="Cluster" k="cluster" />
+                        <SortHeader label="Kind of source" k="cluster" />
                         <SortHeader label="Cost" k="cost" />
-                        <SortHeader label="Enabled" k="enabled" />
+                        <SortHeader label="Switched on" k="enabled" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
@@ -243,9 +267,9 @@ export default function SourceBrowser() {
                               <div className="flex flex-wrap items-center gap-2 font-medium">
                                 {s.name}
                                 {owed && (
-                                  <span className="bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] font-normal uppercase text-ink"
-                                    title="Raise the page budget or narrow the search">
-                                    ◐ Didn&apos;t finish · {owed}
+                                  <span className="bg-neutral-100 px-1.5 py-0.5 text-[11px] font-normal text-ink"
+                                    title="The next collection carries on where it stopped. Raise the page budget or narrow the search to finish sooner.">
+                                    Not finished: {owed}
                                   </span>
                                 )}
                               </div>
@@ -253,7 +277,6 @@ export default function SourceBrowser() {
                                 {s.url}
                               </div>
                             </td>
-                            <td className="px-4 py-2.5 font-mono text-xs">{s.horizon}</td>
                             <td className="px-4 py-2.5 text-sm" title={how === "none" ? s.note : undefined}>
                               {how === "none" && <span aria-hidden className="mr-1">🔒</span>}
                               {ACCESS_LABELS[how]}
@@ -261,7 +284,7 @@ export default function SourceBrowser() {
                                 <span className="block font-mono text-[11px] text-neutral-500">{adapters[s.adapter] ?? s.adapter}</span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5">{pretty(s.cluster)}</td>
+                            <td className="px-4 py-2.5">{clusterName(s.cluster)}</td>
                             <td className="px-4 py-2.5">{COST_LABELS[s.cost] ?? s.cost}</td>
                             <td className="px-4 py-2.5">
                               {how === "none" ? (

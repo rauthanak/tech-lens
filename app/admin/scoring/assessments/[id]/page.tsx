@@ -9,15 +9,19 @@ import ConfirmAction from "@/components/ConfirmAction";
 import EvidenceLine from "@/components/EvidenceLine";
 import FabricLabel from "@/components/FabricLabel";
 import Hood from "@/components/Hood";
+import ModelUse from "@/components/ModelUse";
 import PageHeader from "@/components/PageHeader";
 import StageFlow from "@/components/StageFlow";
 import StatusChip from "@/components/StatusChip";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { calls, resumeAssessment } from "@/lib/actions";
-import { ApiError, fetchJson, sendJson } from "@/lib/api";
-import { formatDay, formatTime, plural } from "@/lib/format";
+import { errorText, fetchJson, sendJson } from "@/lib/api";
+import { formatAt, formatDay, plural } from "@/lib/format";
+import { useHood } from "@/lib/hood";
 import { useHere, withFrom } from "@/lib/here";
 import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
+import { formatScore, LEGEND } from "@/lib/scoring";
+import { useTechLabel } from "@/lib/tech-labels";
 import { PRIORITY, scoreShade } from "@/lib/theme";
 
 const SCORING_STAGES = ["preparing", "scoring", "done"];
@@ -46,6 +50,8 @@ type Assessment = {
   placement?: Placement;
   tora_basis: string;
   evidence_runs?: string[];
+  // a person's priority, which wins over the computed one (kept in computed_priority)
+  override?: { priority: string; reason: string | null; computed: string | null };
 };
 
 type Run = {
@@ -68,14 +74,23 @@ const AXES: { key: string; label: string; short: string }[] = [
   { key: "adoption_readiness", label: "Adoption Readiness", short: "Adoption" },
 ];
 
-const EXTRAS: { code: string; label: string }[] = [
-  { code: "X1", label: "X1 Disruption threat — outside TORA, feeds the priority grid" },
-  { code: "X2", label: "X2 Serviceable capture — outside TORA, feeds the priority grid" },
-  { code: "X3", label: "X3 Capability gap — outside TORA, feeds the Point of View" },
+// scored alongside the three scores; their codes show only under Technical details
+const EXTRAS: { code: string; short: string; label: string }[] = [
+  { code: "X1", short: "Threat", label: "Disruption threat: outside the three scores, feeds the priority grid" },
+  { code: "X2", short: "Capture", label: "Serviceable capture: outside the three scores, feeds the priority grid" },
+  { code: "X3", short: "Gap", label: "Capability gap: outside the three scores, feeds the Point of View" },
 ];
 
 const TIMELINE_COLS = ["near", "mid", "far"] as const;
 const POTENTIAL_ROWS = ["high", "mid", "low"] as const;
+
+type Named = { code: string; name: string };
+
+/** A score with one decimal, "—" when there's none. */
+const score = (n: number | null | undefined) => (n == null ? "—" : formatScore(n));
+
+/** The two grid views: how big, or Disruption threat alone. */
+const VIEW_WORDS = { priority: "By size of prize", priority_by_disruptiveness: "By threat to today's revenue" } as const;
 
 function PriorityChip({ p }: { p: string | null | undefined }) {
   if (!p) return <span className="font-mono text-xs text-neutral-400">—</span>;
@@ -89,29 +104,46 @@ function PriorityChip({ p }: { p: string | null | undefined }) {
 function ScoringRun() {
   const { id } = useParams<{ id: string }>();
   const here = useHere();
+  const label = useTechLabel();
   const pipeline = usePipeline();
   const [resumeCalls, setResumeCalls] = useState<{ count: number; calls: number } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; failed: boolean } | null>(null);
   const [fabric, setFabric] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [axisView, setAxisView] = useState<"priority" | "priority_by_disruptiveness">("priority");
   const [prioFilter, setPrioFilter] = useState<string | null>(null);
   const [gridMeta, setGridMeta] = useState<{
     cells: Record<string, string>;
-    timelineFrom: string[]; potentialFrom: string[]; tCuts: number[]; pCuts: number[];
+    timelineFrom: Named[]; potentialFrom: Named[]; tCuts: number[]; pCuts: number[];
   } | null>(null);
   const [sortKey, setSortKey] = useState<string>("market_potential");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   // table pagination — big runs stay snappy; a new filter goes back to page one
   const [paging, setPaging] = useState({ filter: "", shown: 50 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hood = useHood();
+  // a measure's name, with its code under Technical details
+  const named = (list: Named[]) => list.map((m) => (hood && m.code ? `${m.code} ${m.name}` : m.name));
+  // technologies switched off since: marked on their rows
+  const [off, setOff] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    fetchJson<{ ids?: string[]; technologies?: { _id: string }[] }>("/api/technologies?view=off&ids_only=true&limit=500")
+      .then((d) => setOff(new Set(d.ids ?? d.technologies?.map((t) => t._id) ?? [])))
+      .catch(() => {});
+  }, []);
 
   const loadedOnce = useRef(false);
   const load = useCallback(() => {
     return fetchJson<Run>(`/api/scoring/runs/${id}`)
-      .then((d) => { loadedOnce.current = true; setRun(d); setError(null); })
+      .then((d) => {
+        loadedOnce.current = true;
+        // an override is the priority in force: the grid, filters and sort use it
+        setRun({ ...d, assessments: d.assessments.map((a) => a.override && a.placement
+          ? { ...a, placement: { ...a.placement, priority: a.override.priority } } : a) });
+        setError(null);
+      })
       // a poll timing out during a heavy scoring burst is not "backend down" —
       // keep showing the data we have; only surface errors before the first load
       .catch((e) => { if (!loadedOnce.current) setError(e); });
@@ -131,9 +163,9 @@ function ScoringRun() {
       .then(([c, m]) => {
         const grid: Record<string, unknown> =
           c.config.find((d) => d._id === "priority_grid") ?? {};
-        const label = new Map(m.measures.map((x) => [x._id, `${x.code} ${x.name}`]));
+        const label = new Map(m.measures.map((x) => [x._id, x]));
         const names = (ids: unknown) =>
-          ((ids as string[]) ?? []).map((i) => label.get(i) ?? i);
+          ((ids as string[]) ?? []).map((i) => label.get(i) ?? { code: "", name: i });
         setGridMeta({
           cells: (grid["grid"] as Record<string, string>) ?? {},
           timelineFrom: names(grid["timeline_from"]),
@@ -225,14 +257,15 @@ function ScoringRun() {
     }
   }
 
-  async function act(path: string, done: string) {
+  // `done`: what it did; `failed`: what didn't happen, before the reason
+  async function act(path: string, done: string, failed: string) {
     setNotice(null);
     try {
       await sendJson(path, "POST", {});
-      setNotice(done);
+      setNotice({ text: done, failed: false });
       load();
     } catch (e) {
-      setNotice(e instanceof ApiError ? (e.detail ?? e.message) : "failed");
+      setNotice({ text: `${failed}: ${errorText(e)}`, failed: true });
     }
   }
 
@@ -245,15 +278,18 @@ function ScoringRun() {
         intro="Where each technology in this run landed, fabric by fabric, and its scores."
         help={<>
           <li>One row per technology and fabric. Market, Strategic and Adoption are the three headline scores
-            (0–10); X1–X3 are scored alongside; P is the priority (P1 act now to P6 just watch), H the horizon (H1
-            near to H3 far) and Docs the pages read. ◐ means some measures couldn&apos;t be scored and were left
-            out, never counted as zero.</li>
+            (0–10); Threat, Capture and Gap (disruption threat, serviceable capture, capability gap) are also
+            scored; Priority runs from P1 (act now) to P6 (just watch), Horizon from H1 (near) to H3 (far), and
+            Pages counts the pages read. &ldquo;Switched off&rdquo; marks a technology switched off since: it
+            isn&apos;t assessed again or shown to leaders. &ldquo;partial&rdquo; means some measures couldn&apos;t
+            be scored and were left out, never counted as zero.</li>
           <li>The priority grid counts the rows in each cell: how soon it arrives across, how big the prize is
-            down. Click a cell to filter the table. Disruptiveness swaps &ldquo;how big&rdquo; for the threat to
-            Tata Communications if others move first.</li>
+            down. Click a cell to filter the table. &ldquo;{VIEW_WORDS.priority_by_disruptiveness}&rdquo; swaps
+            how big for the Disruption threat Tata enters: the damage to existing revenue if others move first.</li>
           <li>Click a row for the full reasoning behind it. Filter by fabric or search by name above the grid.</li>
-          <li>Resume finishes a stopped run and keeps what&apos;s done. Recompute roll-ups redoes the averages and
-            priorities from the stored scores with the current weights and cut-points, at no model cost.</li>
+          <li>Resume finishes a stopped run and keeps what&apos;s done. Redo scores works out the three scores and
+            the priorities again from the stored measure scores, with today&apos;s weights and cut-points, at no
+            model cost.</li>
         </>}>
         {run && (
           <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-neutral-600">
@@ -261,18 +297,19 @@ function ScoringRun() {
             {running && run.stage && <span>now: {stageWord(run.stage).toLowerCase()}</span>}
             <span>{run.progress.techs_done} of {plural(run.progress.techs_total, "technology", "technologies")} done</span>
             <span>{plural(run.progress.llm_calls, "model call")} used</span>
-            <span>started {formatTime(run.started_at)}</span>
-            {run.finished_at && <span>finished {formatTime(run.finished_at)}</span>}
+            <span>started {formatAt(run.started_at)}</span>
+            {run.finished_at && <span>finished {formatAt(run.finished_at)}</span>}
             <Hood><span className="font-mono text-xs">run {id}</span></Hood>
           </p>
         )}
+        {run && <ModelUse runIds={[id]} kind="scoring" startedAt={run.started_at} refresh={run.progress.techs_done} calls={false} />}
       </PageHeader>
       <p className="mt-3 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
         {run && (
           <>
             {running && (
               <button
-                onClick={() => act(`/api/scoring/runs/${id}/terminate`, "terminating")}
+                onClick={() => act(`/api/scoring/runs/${id}/terminate`, "Stopping the run; what's already assessed is kept.", "Not stopped")}
                 className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
               >
                 Terminate
@@ -284,20 +321,20 @@ function ScoringRun() {
                   ? `Resume? About ${plural(resumeCalls.calls, "model call")} for the ${plural(resumeCalls.count, "technology", "technologies")} left. What's already assessed is kept.`
                   : "Resume? What's already assessed is kept; only the missing work runs again."}
                 disabled={resumeBlocked}
-                onConfirm={async () => { await resumeAssessment(id); setNotice("Resumed: finishing the missing work."); load(); }} />
+                onConfirm={async () => { await resumeAssessment(id); setNotice({ text: "Resumed: finishing the missing work.", failed: false }); load(); }} />
             )}
             {!running && run.assessments.length > 0 && (
               <button
-                onClick={() => act(`/api/scoring/runs/${id}/recompute`, "TORA recomputed with current weights")}
-                title="re-derive the TORA roll-ups from stored scores using the current measure weights — no model calls"
+                onClick={() => act(`/api/scoring/runs/${id}/recompute`, "Scores and priorities redone with today's weights and cut-points.", "Scores not redone")}
+                title="Work out the three scores and the priority again from the stored measure scores, with today's weights and cut-points: no model calls"
                 className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
               >
-                Recompute roll-ups
+                Redo scores with today&apos;s weights (free)
               </button>
             )}
           </>
         )}
-        {notice && <span className="font-mono text-xs text-muted">{notice}</span>}
+        {notice && <span role="status" className={`text-sm ${notice.failed ? "text-failed" : "text-ink"}`}>{notice.text}</span>}
       </p>
 
       {error != null && <BackendError error={error} />}
@@ -354,7 +391,7 @@ function ScoringRun() {
                   className={`rounded-full px-2 py-0.5 text-xs ${
                     axisView === v ? "bg-navy text-white"
                     : "border border-line text-neutral-600 hover:bg-neutral-100"}`}>
-                  {v === "priority" ? "Impact Potential" : "Disruptiveness"}
+                  {VIEW_WORDS[v]}
                 </button>
               ))}
             </div>
@@ -362,7 +399,7 @@ function ScoringRun() {
               <table className="mt-2 border-separate" style={{ borderSpacing: 2 }}>
                 <thead>
                   <tr>
-                    <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">↓ big / soon →</th>
+                    <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">How big ↓ · How soon →</th>
                     {TIMELINE_COLS.map((c) => (
                       <th key={c} className="pb-0.5 font-mono text-[10px] font-normal uppercase text-neutral-500">{c}</th>
                     ))}
@@ -396,48 +433,61 @@ function ScoringRun() {
             )}
           </div>
           <div className="min-w-64 flex-1 space-y-3 text-[13px] leading-relaxed text-neutral-600">
-            <div>
-              <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                How a cell is chosen
+            {axisView === "priority_by_disruptiveness" && scoped.length > 0 && Object.keys(gridCounts).length === 0 && (
+              <p className="text-ink">
+                Empty: Tata hasn&apos;t entered the Disruption threat for {fabric === "all" ? "these technologies" : "this fabric"} yet.
+              </p>
+            )}
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-baseline gap-2 text-sm text-ink [&::-webkit-details-marker]:hidden">
+                <span aria-hidden className="inline-block text-[9px] text-muted transition-transform group-open:rotate-90">▶</span>
+                How the grid works
+              </summary>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+                    How a cell is chosen
+                  </div>
+                  <p className="mt-0.5">
+                    <em>How soon</em> (across, in both views): the average of{" "}
+                    {gridMeta ? named(gridMeta.timelineFrom).join(" + ") : "the timeline measures"}.
+                  </p>
+                  <p className="mt-0.5">
+                    <em>How big</em> (down): the average of{" "}
+                    {gridMeta ? named(gridMeta.potentialFrom).join(", ") : "the potential measures"}.
+                  </p>
+                  <p className="mt-0.5">
+                    Below {gridMeta?.tCuts[0] ?? 4} is far/low, above {gridMeta?.tCuts[1] ?? 7} is
+                    near/high. A measure without enough evidence is left out of its average,
+                    never counted as zero.
+                  </p>
+                </div>
+                <div>
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+                    How threat, capture and gap affect the priority
+                  </div>
+                  <p className="mt-0.5">
+                    Disruption threat and Serviceable capture never touch the three scores, but they are half of
+                    the <em>how big</em> average: they move the priority, not the headline
+                    scores. Capability gap moves neither; it becomes the capability caveat in the Point of View.
+                  </p>
+                </div>
+                <div>
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
+                    The two views
+                  </div>
+                  <p className="mt-0.5">
+                    <em>{VIEW_WORDS.priority}</em> plots the full <em>how big</em> average.
+                    <em> {VIEW_WORDS.priority_by_disruptiveness}</em> swaps it for Disruption threat alone:
+                    the damage to Tata Communications if others move first (<em>how soon</em> stays
+                    the same). A technology can be a modest opportunity yet a serious
+                    threat, so the same row can sit in two different cells.
+                  </p>
+                </div>
               </div>
-              <p className="mt-0.5">
-                <em>How soon</em> (the horizontal axis, in both views) — average of{" "}
-                {gridMeta?.timelineFrom.join(" + ") ?? "the timeline measures"}.
-              </p>
-              <p className="mt-0.5">
-                <em>How big</em> (Impact Potential, the vertical axis) — average of{" "}
-                {gridMeta?.potentialFrom.join(", ") ?? "the potential measures"}.
-              </p>
-              <p className="mt-0.5">
-                Below {gridMeta?.tCuts[0] ?? 4} is far/low, above {gridMeta?.tCuts[1] ?? 7} is
-                near/high. An unscorable measure is dropped from its average, never
-                counted as zero.
-              </p>
-            </div>
-            <div>
-              <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                How X1–X3 affect the priority
-              </div>
-              <p className="mt-0.5">
-                X1 and X2 never touch the three TORA numbers, but they are half of
-                the <em>how big</em> average — they move the P cell, not the headline
-                scores. X3 moves neither; it becomes the capability caveat in the PoV.
-              </p>
-            </div>
-            <div>
-              <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                The two views
-              </div>
-              <p className="mt-0.5">
-                <em>Impact Potential</em> plots the full <em>how big</em> average.
-                <em> Disruptiveness</em> swaps that vertical axis for X1 alone —
-                the damage to TCL if others move first (<em>how soon</em> stays
-                the same). A technology can be a modest opportunity yet a serious
-                threat, so the same row can sit in two different cells.
-              </p>
-            </div>
+            </details>
             <p className="text-xs text-neutral-500">
-              Click a cell to filter the table below; hover a P cell in the table
+              Click a cell to filter the table below; hover a priority in the table
               for that row&apos;s arithmetic.
               {prioFilter && (
                 <button onClick={() => setPrioFilter(null)}
@@ -471,14 +521,14 @@ function ScoringRun() {
             <colgroup>
               <col />
               {fabric === "all" && <col className="w-28" />}
-              <col className="w-24" />
-              <col className="w-24" />
-              <col className="w-24" />
+              <col className="w-28" />
+              <col className="w-28" />
+              <col className="w-28" />
               <col className="w-14" />
               <col className="w-14" />
               <col className="w-14" />
-              <col className="w-12" />
-              <col className="w-12" />
+              <col className="w-24" />
+              <col className="w-20" />
               <col className="w-16" />
             </colgroup>
             <thead>
@@ -499,26 +549,26 @@ function ScoringRun() {
                   <th key={x.code}
                     className="cursor-pointer px-2 py-2.5 text-right font-normal hover:text-black"
                     onClick={() => sortBy(x.code)} title={x.label}>
-                    {x.code}{arrow(x.code)}
+                    {hood ? x.code : x.short}{arrow(x.code)}
                   </th>
                 ))}
                 <th className="cursor-pointer px-2 py-2.5 text-right font-normal hover:text-black"
                   onClick={() => sortBy("priority")} title="Priority cell (current grid view)">
-                  P{arrow("priority")}
+                  Priority{arrow("priority")}
                 </th>
                 <th className="cursor-pointer px-2 py-2.5 text-right font-normal hover:text-black"
                   onClick={() => sortBy("horizon")} title="Horizon from the timeline band">
-                  H{arrow("horizon")}
+                  Horizon{arrow("horizon")}
                 </th>
                 <th className="cursor-pointer px-3 py-2.5 text-right font-normal hover:text-black"
                   onClick={() => sortBy("docs")}>
-                  Docs{arrow("docs")}
+                  Pages{arrow("docs")}
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {rows.slice(0, shown).map((a) => (
-                <Row key={a._id} a={a} runId={id} showFabric={fabric === "all"} axisView={axisView} here={here} />
+                <Row key={a._id} a={a} showFabric={fabric === "all"} axisView={axisView} here={here} off={off.has(a.tech_id)} />
               ))}
               {rows.length === 0 && (
                 <tr>
@@ -547,75 +597,76 @@ function ScoringRun() {
       )}
 
       {run && run.assessments.length > 0 && (
-        <p className="mt-2 font-mono text-[11px] text-neutral-500">
-          <span className="text-muted">◐</span> partial — this average is
-          built from fewer measures, because the unscorable ones are dropped
-          rather than counted as zero (hover any score for the counts).
-          A score shown as &ldquo;—&rdquo; is one the evidence could not support.
+        <p className="mt-2 text-xs text-neutral-500">
+          {LEGEND} &ldquo;partial&rdquo;: this average is built from fewer measures, because those without enough
+          evidence are left out rather than counted as zero (hover any score for the counts). &ldquo;—&rdquo;: the
+          evidence couldn&apos;t support a score. For Threat and Capture it means Tata hasn&apos;t entered one yet.
         </p>
       )}
 
       {(run?.skipped?.length ?? 0) > 0 && (
         <div className="mt-3 rounded-card border border-line bg-white px-5 py-3 text-sm text-neutral-600">
           <span className="font-mono text-[11px] uppercase text-neutral-500">skipped: </span>
-          {run!.skipped!.map((s) => `${s.name} (${s.reason})`).join("; ")}
+          {run!.skipped!.map((s) => `${label(s.name)} (${s.reason})`).join("; ")}
         </div>
       )}
     </div>
   );
 }
 
-// chip + marker share one inline-flex line box in every score column, so all
-// chips sit on the same baseline whether or not a marker shows
-function Marker({ on, title }: { on: boolean; title?: string }) {
+// "partial" after a score, in a fixed width so every chip in a column lines up
+// whether or not it shows
+function Partial({ on, title }: { on: boolean; title?: string }) {
   return (
-    <span
-      title={on ? title : undefined}
-      className={`relative -top-1 ml-0.5 inline-block w-2 text-center font-mono text-[10px] ${
-        on ? "text-muted" : "text-transparent"
-      }`}
-    >
-      ◐
+    <span title={on ? title : undefined} className="ml-1 inline-block w-9 text-left text-[10px] text-muted">
+      {on ? "partial" : ""}
     </span>
   );
 }
 
 function placementTitle(a: Assessment): string {
   const p = a.placement;
-  if (!p) return "no placement — run the recompute";
+  if (!p) return "Not placed yet: Redo scores places it";
   if (!p.priority) {
     const gaps = [
       p.timeline.score == null && "how soon has no scored measures",
       p.potential.score == null && "how big has no scored measures",
     ].filter(Boolean).join("; ");
-    return `no cell — ${gaps || "composites incomplete"}. The method won't place what it can't compute.`;
+    return `Held beside the grid: ${gaps || "how soon or how big is incomplete"}. The method won't place what it can't compute.`;
   }
   const parts = [
-    `${p.priority}: how soon ${p.timeline.score} (${p.timeline.band}) × how big ${p.potential.score} (${p.potential.band})`,
+    `${p.priority}: how soon ${score(p.timeline.score)} (${p.timeline.band}) × how big ${score(p.potential.score)} (${p.potential.band})`,
   ];
   if (p.timeline.partial || p.potential.partial) {
-    parts.push(`partial — how soon ${p.timeline.scored ?? "?"}, how big ${p.potential.scored ?? "?"} measures scored; unscorables dropped, never zeroed`);
+    parts.push(`partial: how soon ${p.timeline.scored ?? "?"}, how big ${p.potential.scored ?? "?"} measures scored; the rest left out, never zeroed`);
   }
   if (p.priority_by_disruptiveness && p.priority_by_disruptiveness !== p.priority) {
-    parts.push(`disruptiveness view: ${p.priority_by_disruptiveness} (X1 ${p.disruptiveness.score})`);
+    parts.push(`${VIEW_WORDS.priority_by_disruptiveness.toLowerCase()}: ${p.priority_by_disruptiveness} (disruption threat ${score(p.disruptiveness.score)})`);
   }
   return parts.join(". ");
 }
 
-function Row({ a, runId, showFabric, axisView, here }: {
-  a: Assessment; runId: string; showFabric: boolean;
-  axisView: "priority" | "priority_by_disruptiveness"; here: string;
+function Row({ a, showFabric, axisView, here, off }: {
+  a: Assessment; showFabric: boolean;
+  axisView: "priority" | "priority_by_disruptiveness"; here: string; off: boolean;
 }) {
   const router = useRouter();
-  const href = withFrom(`/admin/scoring/assessments/${runId}/${encodeURIComponent(a._id)}`, here);
+  const label = useTechLabel();
+  const href = withFrom(`/admin/technologies/${a.tech_id}?fabric=${encodeURIComponent(a.fabric_id)}`, here);
   return (
     <tr className="cursor-pointer hover:bg-neutral-50" title="Open this assessment's details"
       onClick={() => router.push(href)}>
       <td className="truncate px-4 py-2 font-medium">
         <Link href={withFrom(`/admin/technologies/${a.tech_id}`, here)} onClick={(e) => e.stopPropagation()}
           className="hover:underline" title="Open the technology">
-          {a.technology}
+          {label(a.technology)}
         </Link>
+        {off && (
+          <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] font-normal text-muted"
+            title="Switched off since this run: not assessed again or shown to leaders; its pages are still collected">
+            Switched off
+          </span>
+        )}
       </td>
       {showFabric && (
         <td className="truncate px-3 py-2 font-mono text-[11px] uppercase text-neutral-500">
@@ -628,23 +679,20 @@ function Row({ a, runId, showFabric, axisView, here }: {
           <td key={key} className="px-3 py-2 text-right">
             <span className="inline-flex items-center">
               <span className={`inline-block min-w-10 px-1.5 py-0.5 text-center font-mono text-xs tabular-nums ${scoreShade(ax?.score ?? null)}`}>
-                {ax?.score ?? "—"}
+                {score(ax?.score)}
               </span>
-              <Marker on={Boolean(ax?.partial)}
-                title={ax ? `${ax.scored} of ${ax.of} measures scored — unscorables excluded, never zeroed` : undefined} />
+              <Partial on={Boolean(ax?.partial)}
+                title={ax ? `${ax.scored} of ${ax.of} measures scored; the rest left out, never zeroed` : undefined} />
             </span>
           </td>
         );
       })}
       {EXTRAS.map((x) => {
-        const score = a.extras?.[x.code] ?? null;
+        const value = a.extras?.[x.code] ?? null;
         return (
           <td key={x.code} className="px-2 py-2 text-right" title={x.label}>
-            <span className="inline-flex items-center">
-              <span className={`inline-block min-w-8 px-1 py-0.5 text-center font-mono text-xs tabular-nums ${scoreShade(score)}`}>
-                {score ?? "—"}
-              </span>
-              <Marker on={false} />
+            <span className={`inline-block min-w-8 px-1 py-0.5 text-center font-mono text-xs tabular-nums ${scoreShade(value)}`}>
+              {score(value)}
             </span>
           </td>
         );
@@ -652,9 +700,10 @@ function Row({ a, runId, showFabric, axisView, here }: {
       <td className="px-2 py-2 text-right" title={placementTitle(a)}>
         <span className="inline-flex items-center">
           <PriorityChip p={a.placement?.[axisView]} />
-          <Marker
-            on={Boolean(a.placement?.timeline.partial || a.placement?.potential.partial)}
-            title="a composite behind this cell is partial — hover the cell for the counts" />
+          {a.override && axisView === "priority" && (
+            <span className="ml-1 text-[11px] text-muted"
+              title={`Set by a person (computed ${a.override.computed ?? "none"}): ${a.override.reason ?? ""}`}>✎</span>
+          )}
         </span>
       </td>
       <td className="px-2 py-2 text-right font-mono text-xs text-neutral-700">

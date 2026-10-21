@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
-import PageHelp from "@/components/PageHelp";
+import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
-import { Fabric, Measure } from "@/lib/scoring";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { CONFIG_LABELS, Fabric, KIND_LABELS, Measure } from "@/lib/scoring";
 
 type Pending = { kind: string; id: string; label: string; open_question: string | null };
 type ConfigDoc = { _id: string; open_question: string | null; [key: string]: unknown };
@@ -48,22 +48,22 @@ export default function PendingPage() {
 
   return (
     <div>
-      <p className="text-sm text-neutral-600">
-        Setup decisions still waiting on the client&apos;s answer.
-      </p>
-      <PageHelp>
+      <PageHeader title="Open questions"
+        intro="Setup decisions still waiting on Tata's answer."
+        help={<>
         <li>Each row is a fabric, measure or setting with an open question; click it to open its tab.</li>
         <li>Open questions don&apos;t change scoring: the next assessment run uses whatever is saved.</li>
-        <li>Settle one on its own tab by blanking its question, or with Mark settled on Weights &amp; Grid. Raise a
-          question puts an item back on this list.</li>
-      </PageHelp>
+        <li>Settle one on its own tab by clearing its question, or with Mark as settled on Weights &amp; Grid. Raise
+          a question puts an item back on this list.</li>
+      </>} />
 
       {error != null && <BackendError error={error} />}
 
       {data && (
         <>
-          <p className="mt-4 font-mono text-xs text-neutral-500">
-            {data.pending.length} open across {data.total_items} items
+          <p className="mt-4 text-sm text-neutral-600">
+            {data.pending.length.toLocaleString()} of the {data.total_items.toLocaleString()} setup items still wait on
+            Tata&apos;s answer.
           </p>
           <div className="mt-3 divide-y divide-neutral-100 overflow-hidden rounded-card border border-line bg-white">
             {data.pending.map((p) => (
@@ -73,10 +73,10 @@ export default function PendingPage() {
                 className="block px-5 py-3 hover:bg-neutral-50"
               >
                 <div className="flex items-center gap-3">
-                  <span className="bg-neutral-100 px-2 py-0.5 font-mono text-[11px] uppercase">
-                    ? {p.kind}
+                  <span className="bg-neutral-100 px-2 py-0.5 text-xs">
+                    {KIND_LABELS[p.kind] ?? p.kind}
                   </span>
-                  <span className="font-medium">{p.label}</span>
+                  <span className="font-medium">{p.kind === "config" ? CONFIG_LABELS[p.id] ?? p.label : p.label}</span>
                 </div>
                 <p className="mt-1 text-sm text-neutral-600">{p.open_question}</p>
               </Link>
@@ -125,10 +125,10 @@ function RaiseQuestion({
       value: `fabric:${f._id}`, group: "Fabrics", label: f.name,
     })),
     ...measures.filter((m) => !open(m.open_question)).map((m) => ({
-      value: `measure:${m._id}`, group: "Measures", label: `${m.code} — ${m.name}`,
+      value: `measure:${m._id}`, group: "Measures", label: m.name,
     })),
     ...config.filter((c) => !open(c.open_question)).map((c) => ({
-      value: `config:${c._id}`, group: "Weights & grid", label: c._id.replace(/_/g, " "),
+      value: `config:${c._id}`, group: "Weights & grid", label: CONFIG_LABELS[c._id] ?? c._id.replace(/_/g, " "),
     })),
   ];
   const groups = ["Fabrics", "Measures", "Weights & grid"];
@@ -162,7 +162,7 @@ function RaiseQuestion({
       setQuestion("");
       onAdded();
     } catch (e) {
-      setSaveError(e instanceof ApiError ? (e.detail ?? e.message) : "save failed");
+      setSaveError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -178,8 +178,8 @@ function RaiseQuestion({
     >
       <h2 className="font-semibold">Raise a question</h2>
       <p className="mt-1 text-sm text-neutral-600">
-        Put an item back on this list — pick what the question is about and it
-        stays pending until the question is blanked.
+        Add a question for Tata about a fabric, measure or setting. It stays here until someone clears it on that
+        item&apos;s tab.
       </p>
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="text-sm font-medium">
@@ -196,17 +196,17 @@ function RaiseQuestion({
           </select>
         </label>
         <label className="text-sm font-medium sm:col-span-2">
-          Question for the client
+          Question for Tata
           <textarea className={`${field} min-h-16`} value={question}
             placeholder="what needs their answer before this item counts as settled"
             onChange={(e) => setQuestion(e.target.value)} required />
         </label>
       </div>
       {saveError && <p className="mt-2 text-sm text-failed">Save failed: {saveError}</p>}
-      <div className="mt-2"><SavedNote show={saved} /></div>
+      <div className="mt-2"><SavedNote show={saved} what="It's on the list above; scoring doesn't change." /></div>
       <button type="submit" disabled={saving || !target || !question.trim()}
         className="mt-3 rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong disabled:opacity-50">
-        {saving ? "Adding…" : "Add to pending"}
+        {saving ? "Adding…" : "Add the question"}
       </button>
     </form>
   );

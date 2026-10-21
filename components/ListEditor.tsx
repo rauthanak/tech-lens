@@ -2,20 +2,27 @@
 
 import { useState } from "react";
 
-/** Edit a list of strings: add, edit in place, remove, reorder. Used for
- * start pages, saved searches and the crawl skip list. */
+/** Edit a list of strings: add, edit in place, remove. Used for start pages,
+ * saved searches and the crawl skip list. `ordered` adds up and down arrows,
+ * for a list whose order the radar uses: start pages (the crawl visits them
+ * in this order, which decides what it reads when there are more start pages
+ * than its page limit, or when the model's choice of links fails and it
+ * keeps crawl order). The skip list matches any entry, and saved searches
+ * share the page limit equally, so their order changes nothing. */
 export default function ListEditor({
   items,
   onChange,
   placeholder,
   mono = true,
   disabled = false,
+  ordered = false,
 }: {
   items: string[];
   onChange: (items: string[]) => void;
   placeholder?: string;
   mono?: boolean;
   disabled?: boolean;
+  ordered?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const input = `w-full rounded border border-neutral-300 bg-white px-2.5 py-1 text-sm outline-none focus:border-neutral-500 disabled:bg-neutral-50 ${mono ? "font-mono text-xs" : ""}`;
@@ -39,10 +46,12 @@ export default function ListEditor({
         <div key={i} className="flex items-center gap-1.5">
           <input className={input} value={item} disabled={disabled}
             onChange={(e) => set(i, e.target.value)} />
-          <button type="button" className={small} disabled={disabled || i === 0}
-            onClick={() => move(i, -1)} title="Move up">↑</button>
-          <button type="button" className={small} disabled={disabled || i === items.length - 1}
-            onClick={() => move(i, 1)} title="Move down">↓</button>
+          {ordered && <>
+            <button type="button" className={small} disabled={disabled || i === 0}
+              onClick={() => move(i, -1)} title="Move up: read earlier">↑</button>
+            <button type="button" className={small} disabled={disabled || i === items.length - 1}
+              onClick={() => move(i, 1)} title="Move down: read later">↓</button>
+          </>}
           <button type="button" className={small} disabled={disabled}
             onClick={() => onChange(items.filter((_, j) => j !== i))} title="Remove">✕</button>
         </div>

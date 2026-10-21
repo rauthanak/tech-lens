@@ -27,6 +27,11 @@ const SECTIONS: [string, string][] = [
   ["/admin/scoring/assessments", "Assessment runs"],
   ["/admin/operations", "Operations"],
   ["/admin/runs", "Collections"],
+  ["/admin/import", "Import technologies"],
+  ["/admin/finance", "Finance"],
+  ["/admin/classification", "Classification"],
+  ["/admin/path", "Path to scale"],
+  ["/admin/mechanisms", "Mechanisms"],
   ["/admin", "Briefing"],
 ];
 

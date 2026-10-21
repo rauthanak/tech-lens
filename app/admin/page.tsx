@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
+import GateList from "@/components/GateList";
 import PageHeader from "@/components/PageHeader";
+import PublishEdition from "@/components/PublishEdition";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { fetchRunsPreview, type RunsPreview } from "@/lib/actions";
@@ -14,7 +16,6 @@ import { useMedia } from "@/lib/media";
 import { usePipeline } from "@/lib/pipeline";
 import type { BriefingSummary, FoundHit, FoundResponse } from "@/lib/signals";
 import { useTechLabel } from "@/lib/tech-labels";
-import { itemHref, itemSentence } from "@/lib/waiting";
 
 // The Briefing: everything a window of collecting, or one collection, found,
 // in one list. Recent findings come first, in the signal list's order, then
@@ -128,7 +129,6 @@ function RadarBriefing() {
   const s = summary;
   const scope = s?.scope;
   const runScope = scope && "run_id" in scope ? scope : null;
-  const waiting = p?.for_analyst.filter((i) => i.kind !== "check") ?? [];
   const typeRow = s?.types.find((t) => t.signal_id === type);
   const typeName = (id: string) => s?.types.find((t) => t.signal_id === id)?.name ?? id;
   // per band and type, counts for the headers (the summary has them per type)
@@ -155,8 +155,12 @@ function RadarBriefing() {
             model cost.</li>
           <li>The rail counts each type; click one to show only that type. The window menu sets how far back to look,
             by collection date.</li>
-          <li>&ldquo;Waiting for you&rdquo; lists work that needs your go-ahead, such as assessments and Points of
-            View. Nothing on this page spends model calls.</li>
+          <li>The three cards at the top are your to-do: what to settle before technologies are scored, what to settle
+            before a Point of View goes to leaders, and publishing what leaders see. Closed, each says what waits; click
+            its title to open it, and this browser remembers which you left open. Each row counts technologies; its
+            sentence opens where it&apos;s done. A row that is one decision is done in place: a run (classify, assess,
+            write) shows its model calls and asks before starting, and each possibly nascent technology gets Yes or
+            No.</li>
         </>}
         right={!run && (
         <label className="shrink-0">
@@ -198,18 +202,8 @@ function RadarBriefing() {
         </div>
       ) : (
         <>
-          {waiting.length > 0 && (
-            <div className="mt-5 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 rounded-card border border-line bg-white px-5 py-3 text-sm">
-              <span className="flex items-center gap-2 font-semibold">
-                <span className="h-2 w-2 rounded-full bg-azure" aria-hidden />Waiting for you
-              </span>
-              {waiting.map((item) => (
-                <Link key={item.kind} href={itemHref(item)} className="text-link hover:underline">
-                  {itemSentence(item)} →
-                </Link>
-              ))}
-            </div>
-          )}
+          <GateList />
+          <div className="mt-3"><PublishEdition /></div>
 
           {s && (
             <div className={`mt-6 grid grid-cols-1 gap-7 min-[900px]:grid-cols-[240px_minmax(0,1fr)] ${docked

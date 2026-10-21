@@ -11,20 +11,26 @@ type Item = { href: string; label: string; active: (path: string) => boolean };
 const under = (prefix: string) => (path: string) => path === prefix || path.startsWith(prefix + "/");
 const SETUP_ROUTES = ["/admin/sources", "/admin/signals/list", "/admin/scoring/fabrics",
   "/admin/scoring/measures", "/admin/scoring/config", "/admin/scoring/pending", "/admin/prompts",
-  "/admin/changes"];
+  "/admin/changes", "/admin/classification", "/admin/path", "/admin/mechanisms", "/admin/import", "/admin/finance"];
+
+// One technology's result in one fabric (/admin/scoring/assessments/{run}/{id})
+// is read as part of that technology, so Technologies stays lit there; the
+// runs list and a run's page are Operations' history.
+const oneAssessment = (path: string) => /^\/admin\/scoring\/assessments\/[^/]+\/[^/]+/.test(path);
 
 // What the radar found, then how it runs. Assessment runs live on
 // Operations, and single assessments on each technology's page. Findings
 // are read on the Briefing; the signal list is in Setup.
 const MAIN: Item[] = [
   { href: "/admin", label: "Briefing", active: (p) => p === "/admin" },
-  { href: "/admin/technologies", label: "Technologies", active: under("/admin/technologies") },
+  { href: "/admin/technologies", label: "Technologies",
+    active: (p) => under("/admin/technologies")(p) || oneAssessment(p) },
   { href: "/admin/scoring/pov", label: "Points of View", active: under("/admin/scoring/pov") },
 ];
 
 const WORK: Item[] = [
   { href: "/admin/operations", label: "Operations",
-    active: (p) => ["/admin/operations", "/admin/runs", "/admin/scoring/assessments"].some((r) => under(r)(p)) },
+    active: (p) => !oneAssessment(p) && ["/admin/operations", "/admin/runs", "/admin/scoring/assessments"].some((r) => under(r)(p)) },
   { href: "/admin/sources", label: "Setup",
     active: (p) => p === "/admin/scoring" || SETUP_ROUTES.some((r) => under(r)(p)) },
 ];
@@ -42,7 +48,7 @@ export default function TopBar() {
           ? "border-azure text-white" : "border-transparent text-white/70 hover:text-white"}`}>
         {item.label}
         {item.label === "Setup" && changes > 0 && (
-          <span title="Edits not yet in the seeding data"
+          <span title="Setup edits not yet saved into the starting files a fresh install loads"
             className="rounded-full bg-azure px-1.5 font-mono text-[10px] text-ink">
             {changes}
           </span>
@@ -62,6 +68,8 @@ export default function TopBar() {
           {menu(WORK)}
         </nav>
         <div className="ml-auto flex items-center gap-4">
+          <a href={process.env.NEXT_PUBLIC_FRONTIER_URL ?? "http://localhost:3200"} target="_blank" rel="noreferrer"
+            className="hidden whitespace-nowrap text-sm text-white/70 hover:text-white sm:inline">Leaders&apos; view ↗</a>
           <StatusPill />
           <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu"
             className="text-lg text-white/80 hover:text-white lg:hidden">

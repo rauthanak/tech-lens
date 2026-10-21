@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
-import { ApiError, configChanged, fetchJson, sendJson } from "@/lib/api";
-import { formatTime } from "@/lib/format";
+import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { formatAt, plural } from "@/lib/format";
 
 type FieldDiff = { field: string; seeding_value: unknown; live_value: unknown };
 type Change = {
@@ -25,7 +25,41 @@ const LIST_LABELS: Record<string, string> = {
   fabrics: "Fabric",
   measures: "Measure",
   scoring_config: "Scoring method",
+  recipes: "Combined call",
+  availability: "Commercial availability",
+  domains: "Domain",
+  subdomains: "Sub-domain",
+  trl_levels: "TRL level",
+  path_steps: "Path to scale step",
+  mechanisms: "Value mechanism",
 };
+
+// each stored field by the label its Setup page gives it; one not named here shows its name in words
+const FIELD_LABELS: Record<string, string> = {
+  // Settings: collecting pages
+  skip_url_patterns: "Links the crawler never follows", pages_per_source: "Page budget per source",
+  page_part_chars: "Page part size (characters)", page_part_concurrency: "Parts processed in parallel",
+  lookback_days: "First-run lookback (days)",
+  // Settings: judging technologies, finding evidence, time zone
+  classify_after_collection: "Judge the evidence after each collection",
+  classify_token_budget: "Most tokens one judging run may use", classify_pages_cap: "Pages read per technology when judging",
+  evidence_floor: "Pages needed before a technology counts as ready",
+  wake_after_pages: "Flag a switched-off technology after this many new pages",
+  find_evidence_results: "Find evidence: results per search", find_evidence_daily_budget: "Find evidence: searches per day",
+  default_time_zone: "Default time zone", emerging_availability: "Values that count as emerging",
+  // scoring method
+  max_dossier_tokens: "Most evidence sent per technology", timeline_cutpoints: "How soon: cut-points",
+  potential_cutpoints: "How big: cut-points", grid: "Priority grid", unscorable_policy: "When a measure can't be scored",
+  open_question: "Open question",
+  // signals, skills, sources
+  look_for: "What to look for", prompt: "Skill text", system: "Instructions sent first", entry_urls: "Start pages",
+  searches: "Saved searches", follow_outbound: "Follow links to other sites, one hop", cluster: "Kind of source",
+  enabled: "Switched on", url: "URL",
+  // fabrics, measures, path steps
+  tcl_today: "What Tata has today", anchors: "What low, middle and high scores look like",
+  weight: "Weight within its score", evidence_needed: "Proof needed to reach it", decision: "Then Tata can decide to",
+};
+const fieldLabel = (f: string) => FIELD_LABELS[f] ?? f.replaceAll("_", " ").replace(/^./, (x) => x.toUpperCase());
 
 const key = (c: Change) => `${c.collection}:${c.id}`;
 
@@ -36,8 +70,8 @@ function show(value: unknown): string {
 }
 
 /** Edits apply the moment they're saved. This page only decides which of
- * them go into the seeding data — the configuration the next deployment
- * ships with. */
+ * them go into the starting files (the seeding data) — the configuration a
+ * fresh install loads. */
 export default function ChangesPage() {
   const [data, setData] = useState<ChangesResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -78,11 +112,11 @@ export default function ChangesPage() {
         ok: true,
         text: r.files.length
           ? `Updated ${r.files.join(", ")}. Push with git to share it.`
-          : "Nothing to write — those edits already match the seeding data.",
+          : "Nothing to write: those edits already match the starting files.",
       });
       setTicked(new Set());
     } catch (e) {
-      setResult({ ok: false, text: e instanceof ApiError ? (e.detail ?? e.message) : "the update failed" });
+      setResult({ ok: false, text: errorText(e) });
     } finally {
       setBusy(false);
       configChanged();
@@ -96,15 +130,15 @@ export default function ChangesPage() {
   return (
     <div>
       <PageHeader title="Changes"
-        intro="Setup edits not yet in the seeding data: the configuration a new deployment starts from."
+        intro="Setup edits not yet saved into the starting files a fresh install loads."
         help={<>
           <li>Every edit applies the moment it&apos;s saved. This page only decides which edits are written into the
-            seeding data, the files in the code.</li>
+            starting files (the seeding data, in tech-atlas/seeds).</li>
           <li>Each card shows what changed: the old value struck through and the new one in bold. &ldquo;+
             added&rdquo; and &ldquo;deleted&rdquo; mark whole items.</li>
-          <li>Tick the edits to keep and click Update seeding data. Only the seed files change; push them with git
-            to share them. No model calls.</li>
-          <li>A deployment that loads new seeding data replaces any edit that wasn&apos;t written into it.</li>
+          <li>Tick the edits to keep and click Save into the starting files. Only those files change; push them with
+            git to share them. No model calls.</li>
+          <li>An install that loads new starting files replaces any edit that wasn&apos;t written into them.</li>
         </>} />
 
       {error != null && <BackendError error={error} />}
@@ -112,8 +146,8 @@ export default function ChangesPage() {
       {data && (
         <>
           <p className="mt-5 border-l-2 border-neutral-300 pl-3 text-xs text-neutral-600">
-            Seeding data loaded {formatTime(data.loaded_at)}. A deployment that loads new seeding data
-            replaces edits that weren&apos;t written into it.
+            Starting files loaded {formatAt(data.loaded_at)}. An install that loads new starting files
+            replaces edits that weren&apos;t written into them.
           </p>
 
           {result && (
@@ -124,7 +158,7 @@ export default function ChangesPage() {
 
           {data.items.length === 0 ? (
             <p className="mt-6 text-sm text-neutral-500">
-              No edits since the seeding data was loaded. The live configuration matches it.
+              No edits since the starting files were loaded. The live configuration matches them.
             </p>
           ) : (
             <>
@@ -136,8 +170,8 @@ export default function ChangesPage() {
                 </label>
                 {confirming ? (
                   <span className="flex items-center gap-2 text-sm">
-                    Write {ticked.size} edit{ticked.size === 1 ? "" : "s"} into the seeding data? The next
-                    deployment will use them.
+                    Write {plural(ticked.size, "edit")} into the starting files? The next fresh install will
+                    load them.
                     <button onClick={update} disabled={busy}
                       className="rounded-full bg-navy px-3 py-1.5 text-sm font-medium text-white hover:bg-navy-strong">Write</button>
                     <button onClick={() => setConfirming(false)}
@@ -146,7 +180,7 @@ export default function ChangesPage() {
                 ) : (
                   <button onClick={() => setConfirming(true)} disabled={ticked.size === 0 || busy}
                     className="rounded-full bg-navy px-3.5 py-1.5 text-sm font-medium text-white hover:bg-navy-strong disabled:cursor-not-allowed disabled:opacity-50">
-                    {busy ? "Updating…" : `Update seeding data${ticked.size ? ` (${ticked.size})` : ""}`}
+                    {busy ? "Saving…" : `Save into the starting files${ticked.size ? ` (${ticked.size})` : ""}`}
                   </button>
                 )}
               </div>
@@ -163,7 +197,7 @@ export default function ChangesPage() {
                         {c.kind === "added" && "+ "}{c.kind}
                       </span>
                       {c.updated_at && (
-                        <span className="font-mono text-[11px] text-neutral-500">edited {formatTime(c.updated_at)}</span>
+                        <span className="font-mono text-[11px] text-neutral-500">edited {formatAt(c.updated_at)}</span>
                       )}
                     </label>
                     <div className="mt-3 space-y-2.5">
@@ -187,11 +221,11 @@ function FieldRow({ diff, kind }: { diff: FieldDiff; kind: Change["kind"] }) {
   const box = "max-h-64 overflow-y-auto whitespace-pre-wrap break-words border px-3 py-2 font-mono text-[11.5px] leading-relaxed";
   return (
     <div>
-      <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">{diff.field}</div>
+      <div className="text-[12px] font-medium text-neutral-600" title={diff.field}>{fieldLabel(diff.field)}</div>
       {long ? (
         <div className="mt-1 grid grid-cols-2 gap-2">
           <div>
-            <div className="text-[11px] text-neutral-500">Seeding data</div>
+            <div className="text-[11px] text-neutral-500">Starting files</div>
             <div className={`${box} border-neutral-200 bg-neutral-50 text-neutral-600`}>{kind === "added" ? "—" : before}</div>
           </div>
           <div>

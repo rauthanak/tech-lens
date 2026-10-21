@@ -5,4 +5,6 @@ out/
 next-env.d.ts
 .env*
 .DS_Store
-/docs/
+# working files (plans, checks, scripts) are kept; database backups and logs are not
+/docs/**/*.archive.gz
+/docs/**/*.log

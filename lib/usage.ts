@@ -28,7 +28,7 @@ export type RunUsage = Tokens & {
 export const RUN_KIND: Record<string, string> = {
   collection: "Collection", resolve: "Organize", classify: "Classify", scoring: "Assessment",
   pov: "Points of View", find_evidence: "Find evidence", import: "Import matching",
-  recheck: "Check again", diagnose: "Diagnostic call", value_refresh: "Use cases asked again",
+  recheck: "Check again", diagnose: "Diagnostic call", value_refresh: "Use cases written again",
 };
 
 /** Every token sent, reused ones included. */

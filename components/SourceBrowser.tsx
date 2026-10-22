@@ -290,11 +290,7 @@ export default function SourceBrowser() {
                               {how === "none" ? (
                                 <span className="font-mono text-[11px] text-neutral-400">not collectable</span>
                               ) : (
-                                <span
-                                  className={`inline-block h-2 w-2 rounded-full ${
-                                    s.enabled ? "bg-azure" : "bg-neutral-300"
-                                  }`}
-                                />
+                                <span className={`text-sm ${s.enabled ? "text-ink" : "text-muted"}`}>{s.enabled ? "On" : "Off"}</span>
                               )}
                             </td>
                           </tr>

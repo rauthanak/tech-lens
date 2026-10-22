@@ -40,6 +40,13 @@ export function formatAt(iso: string | null | undefined, tz?: string | null): st
   }
 }
 
+/** Just the clock time, "10:24 AM CDT", in the zone it was done in (as formatAt). */
+export function formatClock(iso: string, tz?: string | null): string {
+  const o: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit", timeZoneName: "short" };
+  try { return new Intl.DateTimeFormat("en-US", { ...o, timeZone: tz ?? undefined }).format(new Date(iso)); }
+  catch { return new Intl.DateTimeFormat("en-US", o).format(new Date(iso)); }
+}
+
 /** A title tooltip for a moment shown as a short day: "Written Oct 21, 2026,
  *  10:13 AM GMT+5:30", in the zone it was done in. */
 export function timeTitle(verb: string, iso: string | null | undefined, tz?: string | null): string | undefined {

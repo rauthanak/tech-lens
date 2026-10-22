@@ -70,7 +70,7 @@ function show(value: unknown): string {
 }
 
 /** Edits apply the moment they're saved. This page only decides which of
- * them go into the starting files (the seeding data) — the configuration a
+ * them are kept as the defaults (the seeding data) — the configuration a
  * fresh install loads. */
 export default function ChangesPage() {
   const [data, setData] = useState<ChangesResponse | null>(null);
@@ -111,8 +111,8 @@ export default function ChangesPage() {
       setResult({
         ok: true,
         text: r.files.length
-          ? `Updated ${r.files.join(", ")}. Push with git to share it.`
-          : "Nothing to write: those edits already match the starting files.",
+          ? `Kept as the defaults (${r.files.join(", ")}). Saving a version shares them.`
+          : "Nothing to keep: those edits already match the defaults.",
       });
       setTicked(new Set());
     } catch (e) {
@@ -130,15 +130,15 @@ export default function ChangesPage() {
   return (
     <div>
       <PageHeader title="Changes"
-        intro="Setup edits not yet saved into the starting files a fresh install loads."
+        intro="Setup edits that aren't kept as the defaults yet. Each one already works; a fresh install starts from the defaults, so keep the edits that should last."
         help={<>
-          <li>Every edit applies the moment it&apos;s saved. This page only decides which edits are written into the
-            starting files (the seeding data, in tech-atlas/seeds).</li>
+          <li>Every edit applies the moment it&apos;s saved. This page only decides which edits become the defaults a
+            fresh install starts from (Technical details: the seeding data, in tech-atlas/seeds).</li>
           <li>Each card shows what changed: the old value struck through and the new one in bold. &ldquo;+
             added&rdquo; and &ldquo;deleted&rdquo; mark whole items.</li>
-          <li>Tick the edits to keep and click Save into the starting files. Only those files change; push them with
-            git to share them. No model calls.</li>
-          <li>An install that loads new starting files replaces any edit that wasn&apos;t written into them.</li>
+          <li>Tick the edits to keep and click Keep as defaults. Nothing else changes, and it costs no model calls;
+            saving a version shares them.</li>
+          <li>A fresh install replaces any edit that wasn&apos;t kept as a default.</li>
         </>} />
 
       {error != null && <BackendError error={error} />}
@@ -146,8 +146,8 @@ export default function ChangesPage() {
       {data && (
         <>
           <p className="mt-5 border-l-2 border-neutral-300 pl-3 text-xs text-neutral-600">
-            Starting files loaded {formatAt(data.loaded_at)}. An install that loads new starting files
-            replaces edits that weren&apos;t written into them.
+            Defaults last loaded {formatAt(data.loaded_at)}. A fresh install replaces edits that weren&apos;t kept as
+            defaults.
           </p>
 
           {result && (
@@ -158,7 +158,7 @@ export default function ChangesPage() {
 
           {data.items.length === 0 ? (
             <p className="mt-6 text-sm text-neutral-500">
-              No edits since the starting files were loaded. The live configuration matches them.
+              Every setup edit is kept as a default.
             </p>
           ) : (
             <>
@@ -170,17 +170,16 @@ export default function ChangesPage() {
                 </label>
                 {confirming ? (
                   <span className="flex items-center gap-2 text-sm">
-                    Write {plural(ticked.size, "edit")} into the starting files? The next fresh install will
-                    load them.
+                    Keep {plural(ticked.size, "edit")} as the defaults? A fresh install will start from them.
                     <button onClick={update} disabled={busy}
-                      className="rounded-full bg-navy px-3 py-1.5 text-sm font-medium text-white hover:bg-navy-strong">Write</button>
+                      className="rounded-full bg-navy px-3 py-1.5 text-sm font-medium text-white hover:bg-navy-strong">Keep</button>
                     <button onClick={() => setConfirming(false)}
                       className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100">Cancel</button>
                   </span>
                 ) : (
                   <button onClick={() => setConfirming(true)} disabled={ticked.size === 0 || busy}
                     className="rounded-full bg-navy px-3.5 py-1.5 text-sm font-medium text-white hover:bg-navy-strong disabled:cursor-not-allowed disabled:opacity-50">
-                    {busy ? "Saving…" : `Save into the starting files${ticked.size ? ` (${ticked.size})` : ""}`}
+                    {busy ? "Saving…" : `Keep as defaults${ticked.size ? ` (${ticked.size})` : ""}`}
                   </button>
                 )}
               </div>
@@ -215,8 +214,10 @@ export default function ChangesPage() {
 }
 
 function FieldRow({ diff, kind }: { diff: FieldDiff; kind: Change["kind"] }) {
-  const before = show(diff.seeding_value);
-  const after = show(diff.live_value);
+  // a sub-domain's status in words: the model proposed it, or a person accepted it
+  const word = (v: unknown) => diff.field === "status" ? ({ new: "proposed", seeded: "accepted" } as Record<string, string>)[String(v)] ?? show(v) : show(v);
+  const before = word(diff.seeding_value);
+  const after = word(diff.live_value);
   const long = before.length > 80 || after.length > 80 || before.includes("\n") || after.includes("\n");
   const box = "max-h-64 overflow-y-auto whitespace-pre-wrap break-words border px-3 py-2 font-mono text-[11.5px] leading-relaxed";
   return (
@@ -225,7 +226,7 @@ function FieldRow({ diff, kind }: { diff: FieldDiff; kind: Change["kind"] }) {
       {long ? (
         <div className="mt-1 grid grid-cols-2 gap-2">
           <div>
-            <div className="text-[11px] text-neutral-500">Starting files</div>
+            <div className="text-[11px] text-neutral-500">Default</div>
             <div className={`${box} border-neutral-200 bg-neutral-50 text-neutral-600`}>{kind === "added" ? "—" : before}</div>
           </div>
           <div>

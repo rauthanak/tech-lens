@@ -9,22 +9,23 @@ import BackendError from "@/components/BackendError";
 import Bottlenecks from "@/components/Bottlenecks";
 import ChoiceForm from "@/components/ChoiceForm";
 import DecisionNote from "@/components/DecisionNote";
-import EvidenceLine from "@/components/EvidenceLine";
 import FabricLabel from "@/components/FabricLabel";
 import FinanceCard from "@/components/FinanceCard";
 import FindEvidence from "@/components/FindEvidence";
 import LeaderRecord from "@/components/LeaderRecord";
 import PathToScale from "@/components/PathToScale";
-import Section from "@/components/Section";
+import Section, { type PartState } from "@/components/Section";
 import UseCases from "@/components/UseCases";
 import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
 import { fetchJson } from "@/lib/api";
 import { decide, type Decision } from "@/lib/decisions";
-import { formatDay, plural } from "@/lib/format";
+import { orList, plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
-import { formatScore, noPriorityReason, type Placement } from "@/lib/scoring";
+import { AXIS_MEANING, formatScore, HORIZON_TERM, noPriorityReason, type Placement, PRIORITY_LEGEND } from "@/lib/scoring";
+import { LEADER_STATES } from "@/components/frontier/items";
+import { beforePublishing, type FabricOpen, toSettle } from "@/lib/open";
 import { PRIORITY, scoreShade } from "@/lib/theme";
-import { type Finance, hasFigures, type Pages, type PathStep, type SuggestedBlocker, type UseCase, useValueLists } from "@/lib/value";
+import { type Finance, FINANCE_SHOWN, hasFigures, type Pages, type PathStep, type SuggestedBlocker, type UseCase, useValueLists } from "@/lib/value";
 
 type State = "scored" | "scored_by_person" | "gap_accepted" | "waiting_for_tata" | "unscored";
 type Result = {
@@ -64,22 +65,66 @@ type Resp = {
 const PRIORITIES = ["P1", "P2", "P3", "P4", "P5", "P6"].map((p) => ({ value: p, label: p }));
 const STATE_WORDS: Record<State, string> = {
   scored: "scored", scored_by_person: "scored by a person", gap_accepted: "gap accepted",
-  waiting_for_tata: "waiting for Tata", unscored: "unscored",
+  waiting_for_tata: "waiting for your figure", unscored: "unscored",
 };
 const SCOPE_WORDS = { technology: "Judged for the technology as a whole", fabric: "Judged in this fabric",
-  tata: "Entered by Tata" };
+  tata: "Entered by your team" };
+const EMPTY: FabricOpen = { fabric_id: "", fabric: "", priority: null, unscored: 0, blocking: false, waiting_for_tata: 0,
+  override_moved: false, suggested_use_cases: [], finance_missing: [], step: null, next_step: null, blockers: true, owner: true,
+  leader: "undefined", resources: false };
+/** One row of Tata's plan's "What's recorded": ✓ or ○, what it is, and the
+ *  part itself (`id`: Waiting on you's anchor). */
+function Recorded({ id, ok, label, children }: { id?: string; ok: boolean; label: string; children: React.ReactNode }) {
+  return (
+    <li id={id} className="grid scroll-mt-20 grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2 gap-y-1 py-2.5 text-[13px] md:grid-cols-[1.25rem_13rem_minmax(0,1fr)]">
+      <span aria-hidden className={ok ? "text-emerald-700" : "text-muted"}>{ok ? "✓" : "○"}</span>
+      <span className="font-medium">{label}<span className="sr-only">{ok ? ": recorded" : ": not recorded"}</span></span>
+      <div className="col-start-2 md:col-start-3">{children}</div>
+    </li>
+  );
+}
+
+const PART = "mt-4 border-t border-neutral-100 pt-3 text-[13.5px] font-semibold scroll-mt-20";
 const PILL = "rounded-full border border-line bg-white px-3 py-1 text-[13px] hover:bg-ground";
 const AXES = [["market_potential", "Market potential"], ["strategic_fit", "Strategic fit"],
   ["adoption_readiness", "Adoption readiness"]] as const;
 
-function composite(label: string, c: Composite) {
-  return `${label}: ${c.score == null ? "not enough evidence" : `${formatScore(c.score)}${c.band ? `, ${c.band}` : ""}`} · ${c.scored} of ${c.of} scored`;
+const PRIZE: Record<string, string> = { high: "big", mid: "moderate", low: "small" };
+const LEADER: Record<FabricOpen["leader"], PartState> = { undefined: { tone: "open", label: "No owner yet" },
+  defined: { tone: "open", label: "Defined" }, aligned: { tone: "open", label: "Aligned" },
+  integrated: { tone: "done", label: "Integrated" } };
+
+/** Why the priority, as a sentence: "it arrives mid-term (how soon: 6 of 10,
+ *  from 2 of 2 measures) and the prize is big (how big: 8 of 10, …)". */
+function because(horizon: string | null, t: Composite, p: Composite) {
+  const of = (c: Composite) => `${formatScore(c.score!)} of 10, from ${c.scored} of ${plural(c.of, "measure")}`;
+  const soon = t.score == null ? "how soon it arrives isn't scored yet"
+    : `it arrives ${horizon ? HORIZON_TERM[horizon] ?? horizon : t.band ?? ""} (how soon: ${of(t)})`;
+  const big = p.score == null ? "how big the prize is isn't scored yet"
+    : `the prize is ${PRIZE[p.band ?? ""] ?? p.band ?? ""} (how big: ${of(p)})`;
+  return `${soon} and ${big}`;
+}
+
+/** Open the part an anchor names (and any fold it sits in), then bring it into view. */
+function jump(hash: string) {
+  const el = hash && document.getElementById(hash);
+  if (!el) return;
+  for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) {
+    if (d instanceof HTMLDetailsElement) d.open = true;
+  }
+  el.scrollIntoView();
 }
 
 /** A technology's latest assessment, one tab per fabric (?fabric=), with the
  *  choices people make before publishing: override the priority, score a
- *  measure by hand or accept its gap, enter Tata's measures, and undo. */
-export default function FabricAssessment({ techId, onChanged }: { techId: string; onChanged?: () => void }) {
+ *  measure by hand or accept its gap, enter Tata's measures, and undo. Each
+ *  tab's badge counts what needs a person before publishing there (`open`). */
+export default function FabricAssessment({ techId, open, notAssessedIn, onChanged }: {
+  techId: string;
+  open?: FabricOpen[];
+  notAssessedIn?: string[];
+  onChanged?: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -89,6 +134,7 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
   const [error, setError] = useState<unknown>(null);
   const [form, setForm] = useState<string | null>(null); // which form is open: "override" or a measure's id
   const [why, setWhy] = useState<Record<string, boolean>>({});
+  const [picking, setPicking] = useState(false); // the blockers' checklist, opened from "Pick blockers…"
   const lists = useValueLists();
 
   const load = useCallback(() =>
@@ -96,10 +142,14 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
       .then((d) => { setData(d); setError(null); })
       .catch(setError), [techId, fabric]);
   useEffect(() => { load(); }, [load]);
-  // a link to "#finance" (the Point of View's "for Tata to fill in") lands on the card once it's drawn
-  const drawn = Boolean(data);
+  // a link to a part ("#finance" from the Point of View, "#measures" from Waiting on you, "#finance" from the
+  // path's next step) lands on it once it's drawn, opening it if it's folded
+  const drawn = data?.assessment._id;
   useEffect(() => {
-    if (drawn && window.location.hash === "#finance") document.getElementById("finance")?.scrollIntoView();
+    if (drawn) jump(window.location.hash.slice(1));
+    const onHash = () => jump(window.location.hash.slice(1));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [drawn]);
 
   const choose = (f: string) => {
@@ -125,7 +175,14 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
   const counts = rows.reduce((c, { r }) => ({ ...c, [r.state]: (c[r.state] ?? 0) + 1 }), {} as Partial<Record<State, number>>);
   const why0 = noPriorityReason(a.placement);
   const tech = data.technology.label;
-  const blockers = (data.finance.bottlenecks?.picked.length ?? 0) + (data.finance.bottlenecks?.other ? 1 : 0);
+  const fo = open?.find((o) => o.fabric_id === a.fabric_id);
+  const undecided = (a.suggested_use_cases ?? []).filter((x) => !data.use_case_decisions[x.key]).length;
+  const poc = data.path.find((st) => st._id === "proof_of_concept");
+  const notNeeded = !data.finance.asks && !data.finance.entered;
+  // what's recorded for Tata's plan: the step, an owner, the blockers, resources
+  const recorded = [!!data.finance.step, !!fo?.owner, !!data.finance.bottlenecks, !!fo?.resources];
+  const notAssessed = (notAssessedIn?.length ?? 0) > 0
+    && `Not assessed in ${orList(notAssessedIn!)}: judged not relevant to it before scoring.`;
 
   const row = ({ mid, r, m }: { mid: string; r: Result; m?: MeasureDef }) => {
     const name = m?.name ?? mid;
@@ -137,7 +194,7 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
         label: r.scope === "technology" ? "Score, 0–10 (applies in every fabric)" : "Score, 0–10",
         placeholder: "what you know that the pages don't show" }
       : r.state === "waiting_for_tata"
-        ? { kind: "tata_entry" as const, openLabel: "Enter", skipLabel: "Leave it out", label: "Tata's score, 0–10",
+        ? { kind: "tata_entry" as const, openLabel: "Enter", skipLabel: "Leave it out", label: "Your figure, 0–10",
           placeholder: "where the figure comes from" }
         : null;
     return (
@@ -166,7 +223,7 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
               </p>
             )}
             {r.state === "waiting_for_tata" && (
-              <p className="mt-0.5 text-[13px] text-amber-900">Waiting for Tata&apos;s figure, 0–10: Enter it, or Leave it out if Tata has none.</p>
+              <p className="mt-0.5 text-[13px] text-amber-900">Waiting for your figure, 0–10: Enter it, or Leave it out if there&apos;s none.</p>
             )}
             {r.state === "scored_by_person" && r.decision && (
               <div className="mt-0.5">
@@ -220,27 +277,38 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
 
   return (
     <div className="mt-3">
-      <nav aria-label="Fabrics" className="flex flex-wrap gap-1.5">
+      {/* the fabric bar stays in view while the parts below scroll */}
+      <div className="sticky top-0 z-20 -mx-2 flex flex-col gap-1 bg-ground/95 px-2 py-2 backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+      <nav aria-label="Fabrics" className="flex gap-1.5 overflow-x-auto sm:flex-wrap">
         {data.fabrics.map((f) => {
           const on = f.fabric_id === a.fabric_id;
+          const mine = open?.find((o) => o.fabric_id === f.fabric_id) ?? {
+            ...EMPTY, unscored: f.states.unscored ?? 0, waiting_for_tata: f.states.waiting_for_tata ?? 0 };
+          const todo = beforePublishing(mine);
           return (
             <button key={f.fabric_id} type="button" aria-current={on ? "page" : undefined} onClick={() => choose(f.fabric_id)}
-              className={`flex items-center gap-2 rounded-full border px-3 py-1 text-[13px] ${on ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground"}`}>
+              className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1 text-[13px] ${on ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground"}`}>
               {f.fabric}
               <span className={`font-mono text-[11px] ${on ? "text-white/80" : "text-muted"}`}>
                 {f.priority ?? "no priority"}{f.override ? " ✎" : ""}
               </span>
-              {(f.states.unscored ?? 0) > 0 && (
+              {todo.length > 0 && (
                 <span className={`rounded-full px-1.5 text-[10.5px] ${on ? "bg-white/20" : "bg-amber-100 text-amber-900"}`}
-                  title={`${f.states.unscored} unscored`}>{f.states.unscored}</span>
+                  title={`Before publishing: ${todo.map((t) => t.label).join("; ")}`}>{toSettle(mine)}</span>
               )}
             </button>
           );
         })}
       </nav>
+      {notAssessed && <span className="hidden text-[12px] text-muted sm:inline">{notAssessed}</span>}
+      </div>
+      {/* on a phone the note sits under the bar, so the bar stays one row */}
+      {notAssessed && <p className="text-[12px] text-muted sm:hidden">{notAssessed}</p>}
+
+      <div key={a.fabric_id}>
 
       {/* the priority, how it was reached, and a person's override */}
-      <section className="mt-3 rounded-card border border-line bg-white px-5 py-4">
+      <section id="priority" className="mt-3 scroll-mt-20 rounded-card border border-line bg-white px-5 py-4">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <FabricLabel id={a.fabric_id} name={a.fabric} />
           <span className="flex items-center gap-2 text-sm">
@@ -250,7 +318,9 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
             </span>
             {e.override && <span className="text-[13px] text-muted">override in force (computed {e.computed_priority ?? "none"})</span>}
           </span>
-          <span className="text-sm text-muted" title="How soon it arrives: H1 near, H2 mid, H3 far">Horizon {e.horizon ?? "—"}</span>
+          <span className="text-sm text-muted">
+            Horizon {e.horizon ? `${e.horizon}, ${HORIZON_TERM[e.horizon] ?? ""}` : "—"}
+          </span>
           <span className="ml-auto">
             {form !== "override" && (
               <button type="button" onClick={() => setForm("override")}
@@ -260,8 +330,25 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
             )}
           </span>
         </div>
-        <p className="mt-2 text-[13px] text-neutral-600">
-          {composite("How soon", a.placement.timeline)} · {composite("How big", a.placement.potential)}
+        {(e.override ? e.computed_priority : e.priority) && (
+          <p className="mt-2 text-[13.5px] text-neutral-800">
+            <b>{e.override ? `Computed ${e.computed_priority}` : e.priority}</b> because{" "}
+            {because(e.horizon, a.placement.timeline, a.placement.potential)}.
+          </p>
+        )}
+        <p className="mt-1 text-[12px] text-muted">{PRIORITY_LEGEND}; the horizon says how soon it arrives.</p>
+        <p className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
+          <span className="text-muted">The three scores the Point of View explains:</span>
+          {AXES.map(([k, label]) => {
+            const ax = a.tora?.[k];
+            return (
+              <span key={k} className="flex items-center gap-1.5" title={AXIS_MEANING[k]}>
+                <span className="text-neutral-700">{label}</span>
+                <span className={`px-1.5 font-mono tabular-nums ${scoreShade(ax?.score ?? null)}`}>{ax?.score != null ? formatScore(ax.score) : "—"}</span>
+                <span className="text-xs text-muted">{ax ? `${ax.scored} of ${ax.of}` : ""}</span>
+              </span>
+            );
+          })}
         </p>
         {!e.priority && why0 && (
           <p className="mt-1 text-[13px] text-amber-900">{why0} Score the missing measures below, or set a priority by hand.</p>
@@ -286,11 +373,13 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
       </section>
 
       {/* each part: what it is, what you do here, where it shows up; then the part */}
-      <Section title={`Measures in ${a.fabric}`}
+      <Section id="measures" title={`Measures in ${a.fabric}`}
+        state={needs.length ? { tone: "todo", label: `${needs.length} to settle` } : { tone: "done", label: "All settled" }}
+        closed={!needs.length}
         summary={(["scored", "scored_by_person", "gap_accepted", "waiting_for_tata", "unscored"] as State[])
           .filter((s) => counts[s]).map((s) => `${counts[s]} ${STATE_WORDS[s]}`).join(" · ")}
         what="What the radar scores, 0 to 10, from the pages; together they set the priority above."
-        todo={needs.length ? "Settle the ones under Needs a person: score by hand, enter Tata's figure, or leave it out."
+        todo={needs.length ? "Settle the ones under Needs a person: score by hand, enter your figure, or leave it out."
           : "Nothing needs a person here."}
         shows="The priority, here and in the leaders' view, and the Point of View.">
         {needs.length > 0 && (
@@ -305,74 +394,95 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
         </details>
       </Section>
 
-      <Section title={`Use cases: where the value lands in ${a.fabric}`}
+      <Section id="use-cases" title={`Use cases: where the value lands in ${a.fabric}`}
+        state={undecided ? { tone: "todo", label: `${plural(undecided, "suggestion")} to accept or reject` } : undefined}
         summary={a.use_cases?.length ? plural(a.use_cases.length, "use case") : "none from the pages yet"}
         what={<>Ways Tata could make or save money with {tech} in {a.fabric}, read from its pages. Each has two levers, how it
           earns (contribution) and how it cuts the cost of delivering (delivery cost), and the capital it needs.</>}
         todo={a.suggested_use_cases?.length ? "Accept or reject the use cases the model suggested without pages."
-          : "Read them. Money figures come from people, under Finance below; the model never writes one."}
+          : "Read them; the model never writes a money figure."}
         shows="The Point of View, and the leaders' view.">
         <UseCases cases={a.use_cases ?? []} suggested={a.suggested_use_cases ?? []} none={a.no_use_case ?? null}
           failed={a.value_failed} decisions={data.use_case_decisions} pages={data.cited_pages} lists={lists} techId={techId}
-          fabricId={a.fabric_id} onChanged={done} />
+          fabricId={a.fabric_id} onChanged={done} compact />
       </Section>
 
-      <Section title={`What could stop it scaling in ${a.fabric}`}
-        summary={data.finance.bottlenecks ? `${plural(blockers, "blocker")} picked`
-          : a.suggested_bottlenecks?.length ? `${a.suggested_bottlenecks.length} suggested from the pages, none picked yet` : "none picked yet"}
-        what={<>Problems that commonly stop a technology growing into a real business in {a.fabric}, such as customers&apos; data
-          being hard to move. {a.fabric}&apos;s list is kept in Setup › Fabrics.</>}
-        todo={<>Tick the ones that apply to {tech}, or write your own. Those the model read on a page are marked: tick them only
-          if you agree.</>}
-        shows="The leaders' view and the Point of View. Picking them is one of the things the owner's record needs to reach Aligned (below).">
-        <Bottlenecks key={`${a.fabric_id}:${data.finance.bottlenecks?.decision._id ?? ""}`} picked={data.finance.bottlenecks}
-          options={lists.fabrics[a.fabric_id] ? lists.fabrics[a.fabric_id].bottlenecks ?? [] : undefined}
-          suggested={a.suggested_bottlenecks} pages={data.cited_pages} techId={techId} fabricId={a.fabric_id} onChanged={done} />
+      <Section id="plan" title={`Tata's plan for it in ${a.fabric}`}
+        state={fo ? { ...LEADER[fo.leader], label: `Commitment: ${LEADER[fo.leader].label} · ${recorded.filter(Boolean).length} of 4 recorded` } : undefined}
+        closed={fo?.leader === "integrated"}
+        what={<>Who owns {tech} in {a.fabric}, where Tata is on its path to scale, and what could stop it. Typed in by people; it
+          never changes a score.</>}
+        todo="Record the step Tata has reached, the owner and next action, and the blockers that apply; add people, budget or a trial when they're committed. Each one recorded raises the commitment."
+        shows="The leaders' view shows the commitment beside the technology, so leaders see which bets have an owner and resources; the Point of View takes all of it in, as Tata's own record, when it's next written: rewrite it to bring it up to date.">
+        <div id="path" className="scroll-mt-20">
+          <h4 className={`${PART} mt-1 border-t-0 pt-0`}>Where Tata is <span className="font-normal text-muted">· its path to scale, Tata&apos;s process</span></h4>
+          <PathToScale steps={data.path} current={data.finance.step} next={data.finance.next_step} decision={data.finance.step_decision}
+            techId={techId} fabricId={a.fabric_id} finance={data.finance} onChanged={done} />
+        </div>
+        <h4 className={PART}>What&apos;s recorded <span className="font-normal text-muted">· sets the commitment leaders see</span></h4>
+        <ul className="divide-y divide-neutral-100">
+          <Recorded ok={recorded[0]} label="The step Tata has reached">
+            {data.finance.step ? `${data.finance.step.name}, step ${data.finance.step.order} of ${data.path.length}`
+              : <span className="text-muted">Not recorded yet: Record the step, above.</span>}
+          </Recorded>
+          <Recorded id="owner" ok={recorded[1]} label="Owner and next action">
+            {/* drawn again when the path step or blockers change: the commitment follows them */}
+            <LeaderRecord key={`${a.fabric_id}:${data.finance.step_decision?._id ?? ""}:${data.finance.bottlenecks?.decision._id ?? ""}`}
+              techId={techId} fabricId={a.fabric_id} onChanged={done} />
+          </Recorded>
+          <Recorded id="blockers" ok={recorded[2]} label="What could stop it scaling">
+            {data.finance.bottlenecks || picking ? (
+              <>
+                {!data.finance.bottlenecks && (
+                  <p className="mb-1.5 text-[12.5px] text-neutral-700">
+                    Problems that commonly stop a technology growing into a real business in {a.fabric}, such as customers&apos;
+                    data being hard to move ({a.fabric}&apos;s list is kept in{" "}
+                    <Link href="/admin/scoring/fabrics" className="text-link hover:underline">Setup › Fabrics</Link>). Tick the ones
+                    that apply, or write your own; those the model read on a page are marked: tick them only if you agree.
+                  </p>
+                )}
+                <Bottlenecks key={`${a.fabric_id}:${data.finance.bottlenecks?.decision._id ?? ""}`} picked={data.finance.bottlenecks}
+                  options={lists.fabrics[a.fabric_id] ? lists.fabrics[a.fabric_id].bottlenecks ?? [] : undefined}
+                  suggested={a.suggested_bottlenecks} pages={data.cited_pages} techId={techId} fabricId={a.fabric_id}
+                  onCancel={data.finance.bottlenecks ? undefined : () => setPicking(false)}
+                  onChanged={() => { setPicking(false); done(); }} />
+              </>
+            ) : (
+              <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-muted">{a.suggested_bottlenecks?.length
+                  ? `None picked yet; ${a.suggested_bottlenecks.length} suggested from the pages.` : "None picked yet."}</span>
+                <button type="button" onClick={() => setPicking(true)}
+                  className="rounded-full border border-line bg-white px-3 py-0.5 text-[13px] hover:bg-ground">Pick blockers…</button>
+              </span>
+            )}
+          </Recorded>
+          <Recorded ok={recorded[3]} label="People, budget or a trial">
+            <span className="text-muted">{recorded[3] ? "Recorded: see the owner's row."
+              : recorded[1] ? "Not committed yet: add them with Change, in the owner's row, when they are."
+              : "Recorded with the owner and next action, once committed."}</span>
+          </Recorded>
+        </ul>
+        <p className="mt-2 text-[12px] text-muted">
+          Commitment rises as these are recorded:{" "}
+          {LEADER_STATES.slice(1).map((st, i) => (
+            <span key={st.id}>{i > 0 && " → "}<b className="font-medium text-ink">{st.name}</b> ({st.means})</span>
+          ))}.
+        </p>
       </Section>
 
-      <Section title={`How far Tata has got with it in ${a.fabric}`}
-        summary={data.finance.step ? `reached ${data.finance.step.name}` : "not recorded yet"}
-        what={<>Tata&apos;s path to scale: the {data.path.length} steps a technology goes through at Tata, from a first look
-          (Evaluation) to full investment. Each step says the proof needed to reach it and the decision it then lets Tata make.</>}
-        todo="Record the step Tata has actually reached. Only a person sets this; the radar then shows what's still missing for the next step."
-        shows="The leaders' view and the Point of View.">
-        <PathToScale steps={data.path} current={data.finance.step} next={data.finance.next_step} decision={data.finance.step_decision}
-          techId={techId} fabricId={a.fabric_id} onChanged={done} />
-      </Section>
-
-      <Section title={`Who owns it at Tata, and what's next in ${a.fabric}`}
-        what={<>The person at Tata accountable for {tech} in {a.fabric}, their next action and its date, and what&apos;s committed:
-          people, budget or a trial. Typed in by people; it never changes a score.</>}
-        todo="Record the owner and the next action; add what's committed when it is."
-        shows="The leaders' view shows the state next to the technology, so leaders see which bets have an owner and resources.">
-        {/* drawn again when the path step or blockers change: the state follows them */}
-        <LeaderRecord key={`${a.fabric_id}:${data.finance.step_decision?._id ?? ""}:${data.finance.bottlenecks?.decision._id ?? ""}`}
-          techId={techId} fabricId={a.fabric_id} onChanged={done} />
-      </Section>
-
+      {FINANCE_SHOWN && (
       <Section id="finance" title={`Finance in ${a.fabric}`}
-        summary={hasFigures(data.finance) ? "figures entered" : "no figures yet"}
+        state={fo?.finance_missing.length ? { tone: "todo", label: "Figures to enter" }
+          : hasFigures(data.finance) ? { tone: "done", label: "Figures entered" }
+          : notNeeded ? { tone: "open", label: "Not needed yet" } : { tone: "open", label: "No figures yet" }}
+        closed={notNeeded}
         what="What it could earn or protect a year, when it pays back, and the revenue it needs to break even, worked out from figures people enter."
         todo="Enter the figures you have. Each one says where it came from; the model never writes one."
-        shows="The Point of View, and what the next step needs above.">
-        <FinanceCard key={`${a.fabric_id}:${data.finance.entered?._id ?? ""}`} f={data.finance} techId={techId} fabricId={a.fabric_id} onChanged={done} />
+        shows="The Point of View, and what the next step needs in Tata's plan above.">
+        <FinanceCard key={`${a.fabric_id}:${data.finance.entered?._id ?? ""}`} f={data.finance} techId={techId} fabricId={a.fabric_id}
+          askedFrom={poc ? `${poc.name} (step ${poc.order})` : undefined} onChanged={done} />
       </Section>
-
-      <details className="mt-3 rounded-card border border-line bg-white px-5 py-3">
-        <summary className="cursor-pointer text-sm font-semibold">Score detail: the three scores</summary>
-        <div className="mt-2 flex flex-wrap gap-x-8 gap-y-2 text-sm">
-          {AXES.map(([k, label]) => {
-            const ax = a.tora?.[k];
-            return (
-              <span key={k} className="flex items-center gap-2">
-                <span className="text-muted">{label}</span>
-                <span className={`px-1.5 py-0.5 font-mono tabular-nums ${scoreShade(ax?.score ?? null)}`}>{ax?.score != null ? formatScore(ax.score) : "—"}</span>
-                <span className="text-xs text-muted">{ax ? `${ax.scored} of ${ax.of} measures` : ""}</span>
-              </span>
-            );
-          })}
-        </div>
-      </details>
+      )}
 
       {(a.watch_metrics?.length ?? 0) > 0 && (
         <details className="mt-3 rounded-card border border-line bg-white px-5 py-3">
@@ -380,11 +490,6 @@ export default function FabricAssessment({ techId, onChanged }: { techId: string
           <div className="mt-2"><WatchMetrics metrics={a.watch_metrics!} /></div>
         </details>
       )}
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 text-sm text-muted">
-        <span>Assessed {formatDay(a.created_at)} · read {plural(a.doc_count, "page")}</span>
-        <EvidenceLine assessments={[{ evidence_runs: a.evidence_runs }]} />
-        <Link href={`/admin/scoring/assessments/${a.scoring_run_id}`} className="mt-3 text-link hover:underline">Assessment run →</Link>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
+import ConfirmAction from "@/components/ConfirmAction";
 import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
@@ -19,6 +20,23 @@ const KIND_LINK: Record<string, string> = {
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
+
+/** Set or clear (null) the open question on a fabric, measure or setting. */
+async function saveQuestion(kind: string, id: string, question: string | null, fabrics: Fabric[], measures: Measure[]) {
+  if (kind === "fabric") {
+    const f = fabrics.find((x) => x._id === id)!;
+    await sendJson(`/api/scoring/fabrics/${id}`, "PUT", {
+      name: f.name, definition: f.definition, tcl_today: f.tcl_today, enabled: f.enabled, open_question: question });
+  } else if (kind === "measure") {
+    const m = measures.find((x) => x._id === id)!;
+    await sendJson(`/api/scoring/measures/${id}`, "PUT", {
+      name: m.name, axis: m.axis, weight: m.weight, definition: m.definition,
+      anchors: m.anchors, required_evidence: m.required_evidence, open_question: question });
+  } else {
+    await sendJson(`/api/scoring/config/${id}`, "PUT", { open_question: question });
+  }
+  configChanged();
+}
 
 export default function PendingPage() {
   const [data, setData] = useState<{ pending: Pending[]; total_items: number } | null>(null);
@@ -51,10 +69,10 @@ export default function PendingPage() {
       <PageHeader title="Open questions"
         intro="Setup decisions still waiting on Tata's answer."
         help={<>
-        <li>Each row is a fabric, measure or setting with an open question; click it to open its tab.</li>
+        <li>Each row is a fabric, measure or setting with an open question; its name opens its tab. Mark settled
+          when Tata has answered: it leaves the list, and the item keeps its values.</li>
         <li>Open questions don&apos;t change scoring: the next assessment run uses whatever is saved.</li>
-        <li>Settle one on its own tab by clearing its question, or with Mark as settled on Weights &amp; Grid. Raise
-          a question puts an item back on this list.</li>
+        <li>Raise a question puts an item back on this list.</li>
       </>} />
 
       {error != null && <BackendError error={error} />}
@@ -67,19 +85,20 @@ export default function PendingPage() {
           </p>
           <div className="mt-3 divide-y divide-neutral-100 overflow-hidden rounded-card border border-line bg-white">
             {data.pending.map((p) => (
-              <Link
-                key={`${p.kind}-${p.id}`}
-                href={KIND_LINK[p.kind] ?? "/admin/scoring"}
-                className="block px-5 py-3 hover:bg-neutral-50"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="bg-neutral-100 px-2 py-0.5 text-xs">
-                    {KIND_LABELS[p.kind] ?? p.kind}
-                  </span>
-                  <span className="font-medium">{p.kind === "config" ? CONFIG_LABELS[p.id] ?? p.label : p.label}</span>
+              <div key={`${p.kind}-${p.id}`} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-start">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-3">
+                    <span className="bg-neutral-100 px-2 py-0.5 text-xs">{KIND_LABELS[p.kind] ?? p.kind}</span>
+                    <Link href={KIND_LINK[p.kind] ?? "/admin/scoring"} className="font-medium hover:underline">
+                      {p.kind === "config" ? CONFIG_LABELS[p.id] ?? p.label : p.label} →
+                    </Link>
+                  </div>
+                  <p className="mt-1 text-sm text-neutral-600">{p.open_question}</p>
                 </div>
-                <p className="mt-1 text-sm text-neutral-600">{p.open_question}</p>
-              </Link>
+                <ConfirmAction label="Mark settled" secondary confirmLabel="Settled"
+                  question="Tata has answered this? It leaves the list; the item keeps the values it has now (change them on its tab if the answer needs it)."
+                  onConfirm={async () => { await saveQuestion(p.kind, p.id, null, fabrics, measures); await load(); }} />
+              </div>
             ))}
             {data.pending.length === 0 && (
               <p className="px-5 py-6 text-sm text-neutral-500">
@@ -140,23 +159,7 @@ function RaiseQuestion({
     setSaveError(null);
     setSaved(false);
     try {
-      if (kind === "fabric") {
-        const f = fabrics.find((x) => x._id === id)!;
-        await sendJson(`/api/scoring/fabrics/${id}`, "PUT", {
-          name: f.name, definition: f.definition, enabled: f.enabled,
-          open_question: question.trim(),
-        });
-      } else if (kind === "measure") {
-        const m = measures.find((x) => x._id === id)!;
-        await sendJson(`/api/scoring/measures/${id}`, "PUT", {
-          name: m.name, axis: m.axis, weight: m.weight, definition: m.definition,
-          anchors: m.anchors, required_evidence: m.required_evidence,
-          open_question: question.trim(),
-        });
-      } else {
-        await sendJson(`/api/scoring/config/${id}`, "PUT", { open_question: question.trim() });
-      }
-      configChanged();
+      await saveQuestion(kind, id, question.trim(), fabrics, measures);
       setSaved(true);
       setTarget("");
       setQuestion("");

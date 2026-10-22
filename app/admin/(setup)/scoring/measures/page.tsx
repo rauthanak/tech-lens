@@ -119,6 +119,7 @@ export default function MeasuresPage() {
                           {weightShare(m.weight)}
                         </span>
                         <OpenQuestionBadge question={m.open_question} />
+                        <span className="shrink-0 text-sm text-link">Edit</span>
                       </button>
                     ))}
                   </div>

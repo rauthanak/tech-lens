@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import DecisionNote from "@/components/DecisionNote";
-import { type Leader, LEADER_STATES } from "@/components/frontier/items";
+import type { Leader } from "@/components/frontier/items";
 import { errorText, fetchJson } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { decide } from "@/lib/decisions";
@@ -22,10 +22,10 @@ const input = "mt-1 w-full rounded border border-neutral-300 bg-white px-2 py-1 
 
 /** Who owns a technology at Tata in a fabric, and what's next (deck p.13):
  *  the owner, the next action and its date, and what's committed. Entered by
- *  people, never by the model; a score never changes because of it. The
- *  state follows from what's recorded, with the step reached and the blockers
- *  above: Undefined, Defined, Aligned, Integrated, each shown with what it
- *  means. Frontier shows it. */
+ *  people, never by the model; a score never changes because of it. One row
+ *  of the fabric tab's "What's recorded": the commitment it sets (No owner
+ *  yet, Defined, Aligned, Integrated) is said in the plan's title, and the
+ *  leaders' view shows it. People, budget or a trial show once recorded. */
 export default function LeaderRecord({ techId, fabricId, onChanged }: {
   techId: string;
   fabricId: string;
@@ -45,30 +45,17 @@ export default function LeaderRecord({ techId, fabricId, onChanged }: {
 
   if (error) return <p className="text-[13px] text-failed">What a leader recorded didn&apos;t load: {error}</p>;
   if (!rec) return null;
-  const at = LEADER_STATES.findIndex((s) => s.id === rec.state);
   const open = () => { setForm(Object.fromEntries(FIELDS.map((f) => [f.key, rec[f.key] ?? ""]))); setSaveError(null); setEditing(true); };
 
   return (
     <div className="text-[13px]">
-      <ol className="grid grid-cols-1 gap-1.5 sm:grid-cols-4" aria-label="State">
-        {LEADER_STATES.map((s, i) => (
-          <li key={s.id} aria-current={i === at ? "step" : undefined}
-            className={`rounded-lg px-2.5 py-1.5 text-[12px] ${i === at ? "bg-navy text-white" : i < at ? "bg-navy/10 text-navy" : "bg-neutral-100 text-muted"}`}>
-            <b>{s.name}</b>{i === at && " · now"}<span className="block">{s.means}</span>
-          </li>
-        ))}
-      </ol>
-      <p className="mt-1.5 text-[12.5px] text-muted">
-        {rec.needs ? `Next, it needs ${rec.needs}.` : "Every step is recorded."}
-      </p>
-
       {rec.decision && !editing && (
-        <div className="mt-2">
+        <div>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-0.5">
-            {FIELDS.filter((f) => f.key !== "due").map((f) => (
+            {FIELDS.filter((f) => f.key !== "due" && (f.required || rec[f.key])).map((f) => (
               <div key={f.key} className="contents">
                 <dt className="text-muted">{f.label}</dt>
-                <dd>{f.key === "next_action" ? `${rec.next_action}${rec.due ? `, by ${formatDate(rec.due, true)}` : ""}` : rec[f.key]
+                <dd>{f.key === "next_action" ? `${rec.next_action?.replace(/[.\s]+$/, "")}${rec.due ? `, by ${formatDate(rec.due, true)}` : ""}` : rec[f.key]
                   ?? <span className="text-muted">not recorded</span>}</dd>
               </div>
             ))}
@@ -81,7 +68,7 @@ export default function LeaderRecord({ techId, fabricId, onChanged }: {
       )}
       {!rec.decision && !editing && (
         <button type="button" onClick={open}
-          className="mt-2 rounded-full border border-line bg-white px-3 py-1 text-[13px] hover:bg-ground">Record owner and next action…</button>
+          className="rounded-full border border-line bg-white px-3 py-1 text-[13px] hover:bg-ground">Record owner and next action…</button>
       )}
 
       {editing && (

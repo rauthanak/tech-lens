@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import ConfirmAction from "@/components/ConfirmAction";
 import Hood from "@/components/Hood";
 import ModelUse from "@/components/ModelUse";
+import OperationsTabs from "@/components/OperationsTabs";
 import PageHeader from "@/components/PageHeader";
 import ProcessBoard from "@/components/ProcessBoard";
 import ServiceHealth from "@/components/ServiceHealth";
@@ -12,7 +13,7 @@ import StatusChip from "@/components/StatusChip";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { calls, resumeAssessment, startCheck, writePovs } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
-import { formatAt, formatDay, plural } from "@/lib/format";
+import { formatAt, formatClock, formatDay, plural } from "@/lib/format";
 import { blockedReason, usePipeline } from "@/lib/pipeline";
 import { addTokens, beforeRecording, RUN_KIND, type RunUsage, tokenLine } from "@/lib/usage";
 
@@ -169,7 +170,8 @@ function Problems() {
 }
 
 type HistoryRow = { key: string; at: string; tz?: string | null; kind: string; facts: string[]; status: string | null;
-  href: string | null; id: string; ids: string[]; usageKind?: string; used: boolean };
+  href: string | null; id: string; ids: string[]; usageKind?: string; used: boolean;
+  count?: number; until?: string }; // a group of single Points of View: how many, and when the last was written
 type RunRow = { id: string; status: string; run_start_date_time: string; incomplete?: number; resolve_id?: string;
   totals?: { new_documents?: number; signals?: number; other_signals?: number } };
 type ScoringRow = { _id: string; status: string; started_at: string;
@@ -199,6 +201,20 @@ function aboutHref(kind: string, id: string, a: About): string | null {
   if (kind === "pov") return "/admin/scoring/pov";
   if (kind === "resolve") return "/admin/technologies";
   return null;
+}
+
+/** One Point of View written on its own after another within the hour joins
+ *  its row: "22 Points of View written · 10:14–10:24 AM · 22 model calls". */
+function grouped(rows: HistoryRow[], r: HistoryRow): HistoryRow[] {
+  const prev = rows[rows.length - 1];
+  const one = (x: HistoryRow) => x.kind === RUN_KIND.pov && x.facts.includes("1 model call");
+  if (prev && one(r) && (prev.count || one(prev)) && Date.parse(prev.at) - Date.parse(r.at) < 3600_000) {
+    const n = (prev.count ?? 1) + 1;
+    rows[rows.length - 1] = { ...prev, count: n, at: r.at, until: prev.until ?? prev.at, ids: [...prev.ids, ...r.ids],
+      facts: [`${n} written`, plural(n, "model call")] };
+    return rows;
+  }
+  return [...rows, r];
 }
 
 /** Every run that used the model, newest first: collections (with the
@@ -268,7 +284,7 @@ function History() {
                 ...tokens([u, ...parts], u.first_at)],
             };
           }),
-        ].sort((a, b) => b.at.localeCompare(a.at)));
+        ].sort((a, b) => b.at.localeCompare(a.at)).reduce(grouped, [] as HistoryRow[]));
       })
       .catch(() => {});
   }, [done]);
@@ -288,7 +304,9 @@ function History() {
           {rows.slice(0, shown).map((r) => {
             const main = (
               <>
-                <span className="w-48 shrink-0 text-xs text-muted">{formatAt(r.at, r.tz)}</span>
+                <span className="w-48 shrink-0 text-xs text-muted">
+                  {formatAt(r.at, r.tz)}{r.until && r.count ? `–${formatClock(r.until, r.tz)}` : ""}
+                </span>
                 <span className="w-32 shrink-0 font-medium">{r.kind}</span>
                 <span className="min-w-0 flex-1 text-muted">{r.facts.join(" · ")}</span>
               </>
@@ -308,7 +326,7 @@ function History() {
                   {r.used && (
                     <button type="button" onClick={() => setOpen(open === r.key ? null : r.key)} aria-expanded={open === r.key}
                       className="rounded-full border border-line bg-white px-2.5 py-0.5 text-xs hover:bg-ground">
-                      {open === r.key ? "Hide" : "By skill"}
+                      {open === r.key ? "Hide" : "Cost by skill"}
                     </button>
                   )}
                   {r.href && <Link href={r.href} className="text-link" aria-label={`Open the ${r.kind.toLowerCase()}`}>→</Link>}
@@ -334,10 +352,11 @@ function History() {
 export default function OperationsPage() {
   return (
     <div>
+      <OperationsTabs />
       <PageHeader title="Operations" right={<TechnicalDetailsSwitch />}
         intro="How the radar's work is going: what runs on its own, what's waiting for you, anything that needs fixing, and every past run."
         help={<>
-          <li>The cards follow the process from left to right. You start a collection; it picks out the findings on
+          <li>The cards are the process, numbered in order; each says who moves it on. You start a collection; it picks out the findings on
             each new page, then organizes and classifies the technologies by itself. Assessing technologies and
             writing Points of View wait for you: a highlighted card has work, and its button shows the model-call
             cost before anything starts.</li>
@@ -352,18 +371,15 @@ export default function OperationsPage() {
           <li>History lists every run that used the model, newest first: collections (with the organizing that
             ended them), Classify, assessment runs, Points of View, Find evidence, import matching and checks of
             stored pages. Each shows its tokens: in (everything sent), how many of those were reused at a fraction
-            of the price, and out (what the model wrote). By skill opens the breakdown; a row with a page opens
+            of the price, and out (what the model wrote). Cost by skill opens the breakdown; a row with a page opens
             it. Runs from before tokens were recorded say so.</li>
-          <li>Service health shows whether the API and the database are answering. The Technical details switch
-            adds each run&apos;s id.</li>
+          <li>The Technical details switch adds each run&apos;s id, and whether the API and the database are
+            answering; if either is down, that shows here whatever the switch says.</li>
         </>} />
       <div className="mt-7"><ProcessBoard /></div>
       <Problems />
       <History />
-      <section className="mt-10">
-        <h2 className="text-lg font-semibold">Service health</h2>
-        <div className="mt-3"><ServiceHealth /></div>
-      </section>
+      <ServiceHealth />
     </div>
   );
 }

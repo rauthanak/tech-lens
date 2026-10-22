@@ -65,8 +65,8 @@ export function gateRow(item: GateItem): GateRow {
     case "waiting_for_tata":
       return {
         key: item.kind, count: item.count,
-        sentence: `${techs(item.count, ["waits", "wait"])} for Tata's entries`,
-        sub: "Disruption threat and serviceable capture are entered by Tata Communications, on each technology's page.",
+        sentence: `${techs(item.count, ["waits", "wait"])} for your figures`,
+        sub: "Disruption threat and serviceable capture are entered by your team, on each technology's fabric tab.",
         list: list.map((t) => ({ label: t.name, href: page(t, t.fabrics?.[0]), note: `${t.measures} to enter` })),
       };
     case "override_moved":

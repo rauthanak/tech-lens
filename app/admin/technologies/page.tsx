@@ -110,7 +110,7 @@ function HowGroupsWork({ emerging, neither, catalog }: { emerging: string; neith
           mature{neither && `; ${neither} is neither yet`}.</li>
         <li><b>The catalog</b> is Tata&apos;s own list of emerging technologies:{" "}
           {catalog.files.length ? catalog.files.map((f) => `${f.file}, imported ${formatDay(f.at, f.tz)} (${plural(f.technologies, "technology", "technologies")} from it now)`).join("; ")
-            : <>nothing imported yet (<Link href="/admin/import" className="text-link hover:underline">Setup › Import</Link>)</>}
+            : <>nothing imported yet (<Link href="/admin/import" className="text-link hover:underline">Import a catalog file</Link>)</>}
           {byHand && `; ${byHand} by a person`}. <b>New to Tata</b> means emerging and not in the catalog; <b>Blind spots</b>,
           mature and not in it.</li>
         <li><b>Possibly nascent:</b> the model flagged it from one of its pages as new, with a strong early sign; a person
@@ -359,7 +359,8 @@ function Technologies() {
   return (
     <div>
       <PageHeader title="Technologies"
-        right={<div className="flex flex-col items-end gap-2"><TechnicalDetailsSwitch /><AddTechnology onAdded={reload} /></div>}
+        right={<div className="flex flex-col items-end gap-2"><TechnicalDetailsSwitch /><AddTechnology onAdded={reload} />
+          <Link href="/admin/import" className="text-sm text-link hover:underline">Import a catalog file →</Link></div>}
         intro="Every technology the radar found on collected pages, or that Tata imported, and where each one stands. Priority runs from P1 (act now) to P6 (just watch)."
         help={<>
           <li>Each row says where it stands, in one status with its reason: Assessed (with its best priority, and the

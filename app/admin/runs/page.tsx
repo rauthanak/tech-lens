@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import CollectButton from "@/components/CollectButton";
 import Hood from "@/components/Hood";
+import OperationsTabs from "@/components/OperationsTabs";
 import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
@@ -49,7 +50,8 @@ export default function RunsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Operations" title="Collections"
+      <OperationsTabs />
+      <PageHeader title="Collections"
         right={<div className="flex flex-col items-end gap-3"><TechnicalDetailsSwitch /><CollectButton label="Start a collection" /></div>}
         intro="Every collection: one pass over all switched-on sources for new and changed pages."
         help={<>

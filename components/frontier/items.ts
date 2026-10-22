@@ -25,7 +25,7 @@ export type LeaderState = "undefined" | "defined" | "aligned" | "integrated";
 
 /** The states in order, each with what it means. */
 export const LEADER_STATES: { id: LeaderState; name: string; means: string; chip: string }[] = [
-  { id: "undefined", name: "Undefined", means: "no owner yet", chip: "bg-neutral-100 text-muted" },
+  { id: "undefined", name: "No owner yet", means: "nobody answers for it yet", chip: "bg-neutral-100 text-muted" },
   { id: "defined", name: "Defined", means: "an owner and a next action", chip: "bg-azure/15 text-navy" },
   { id: "aligned", name: "Aligned", means: "the step reached and its blockers recorded too", chip: "bg-navy/15 text-navy" },
   { id: "integrated", name: "Integrated", means: "people, budget or a trial committed too", chip: "bg-emerald-100 text-emerald-900" },

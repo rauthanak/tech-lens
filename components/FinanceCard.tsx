@@ -1,14 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { errorText } from "@/lib/api";
 import { decide } from "@/lib/decisions";
-import { figureText, type Figure, type Finance, type Input, money, percent, sourceText } from "@/lib/value";
+import { AMOUNTS, figureText, type Figure, type Finance, type Input, money, NOTES, percent, SHARES, sourceText } from "@/lib/value";
 
 const field = "mt-1 block w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm text-ink";
-const AMOUNTS = ["revenue", "volume", "price", "displaced", "upfront", "running"] as const;
-const SHARES = ["margin", "loss_without", "loss_with"] as const;
-const NOTES = ["buyer", "budget", "exposed_contracts", "cost_per_outcome"] as const;
 type Key = (typeof AMOUNTS)[number] | (typeof SHARES)[number] | (typeof NOTES)[number] | "mechanism";
 
 /** The payback line: cumulative cash, from minus the upfront investment,
@@ -58,14 +56,15 @@ function PaybackLine({ upfront, net, months }: { upfront: number; net: number; m
   );
 }
 
-/** The finance screen for a technology in a fabric: the three figures
- *  (contribution, or contribution protected; payback; break-even) worked out
- *  by code from inputs people enter, each input with where it came from and
- *  when, what's missing, and the payback line. Folded until the card asks
- *  for something (Proof of concept on, or a next step that needs it); the
- *  form opens on "Enter the figures". */
-export default function FinanceCard({ f, techId, fabricId, onChanged, readOnly }: {
-  f: Finance; techId: string; fabricId: string; onChanged?: () => void; readOnly?: boolean;
+/** The finance screen for a technology in a fabric: "Enter the figures"
+ *  first, then the three figures (contribution, or contribution protected;
+ *  payback; break-even) worked out by code from inputs people enter, each
+ *  input with where it came from and when, and the payback line. Until one
+ *  is worked out, what they need is said once. Folded until the card asks for
+ *  something (Proof of concept on, or a next step that needs it); `askedFrom`
+ *  names that step ("Proof of concept, step 3"). */
+export default function FinanceCard({ f, techId, fabricId, onChanged, readOnly, askedFrom = "Proof of concept" }: {
+  f: Finance; techId: string; fabricId: string; onChanged?: () => void; readOnly?: boolean; askedFrom?: string;
 }) {
   const own = (x: { at?: string } | null) => Boolean(x?.at);     // set for this technology, not a default
   const start = () => ({
@@ -99,7 +98,7 @@ export default function FinanceCard({ f, techId, fabricId, onChanged, readOnly }
 
   if (!f.asks && !f.entered && !open) return (
     <p className="text-[13px] text-muted">
-      Not needed yet: finance figures are asked for from Proof of concept on, where a buyer, a budget and a price first
+      Not needed yet: finance figures are asked for from {askedFrom} on, where a buyer, a budget and a price first
       exist, or once its path to scale is set and the next step needs them.{" "}
       {!readOnly && <button type="button" onClick={() => { setOpen(true); setEditing(true); }} className="text-link hover:underline">Enter figures anyway</button>}
     </p>
@@ -120,20 +119,43 @@ export default function FinanceCard({ f, techId, fabricId, onChanged, readOnly }
   const fabricDefault = (x: Input | null) => (x && !own(x) ? `${percent(x.value)}, fabric default` : "blank: fabric default");
   const notes = NOTES.filter((k) => f.notes[k]);
 
+  // what the next step on the path needs from this card before figures are asked for
+  const nextNeeds = (f.next_step?.needs ?? []).filter((n) => !n.have && n.where !== "assessment").map((n) => n.label);
+  const worked = [f.contribution, f.payback, f.break_even].some((x) => x?.value != null || x?.note);
+  const needs = [...new Set([...(f.missing.contribution ?? []), ...(f.missing.payback ?? []), ...(f.missing.break_even ?? [])])];
   return (
     <div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {figure("Contribution, a year", f.contribution, f.missing.contribution)}
-        {figure("Payback", f.payback, f.missing.payback)}
-        {figure("Break-even revenue, a year", f.break_even, f.missing.break_even)}
-      </div>
+      {!readOnly && !editing && (
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <button type="button" onClick={() => { setForm(start()); setEditing(true); }}
+            className="rounded-full bg-navy px-3.5 py-1 text-sm text-white hover:bg-navy-strong">
+            {f.entered ? "Change the figures" : "Enter the figures"}
+          </button>
+          {!f.needed && <span className="text-[12.5px] text-muted">The figures are asked for from {askedFrom} on.{" "}
+            {nextNeeds.length ? `For now, the next step (${f.next_step!.name}) needs only: ${nextNeeds.join("; ")}.`
+              : "Nothing is missing before then."}</span>}
+        </div>
+      )}
+      {worked || readOnly ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {figure("Contribution, a year", f.contribution, f.missing.contribution)}
+          {figure("Payback", f.payback, f.missing.payback)}
+          {figure("Break-even revenue, a year", f.break_even, f.missing.break_even)}
+        </div>
+      ) : (
+        <p className="rounded-lg bg-ground/50 px-3 py-2 text-[13px]">
+          <span className="text-ink">Contribution a year, payback and break-even revenue</span>
+          <span className="text-muted"> aren&apos;t worked out yet. They need: {needs.join(", ")}.</span>
+        </p>
+      )}
       {f.payback?.value != null && f.payback.months != null && f.upfront && f.running && f.contribution?.value != null && (
         <PaybackLine upfront={f.upfront.value} net={f.contribution.value - f.running.value} months={f.payback.months} />
       )}
       <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px] text-muted">
         <li>Counts as {f.mechanism.value === "protect" ? "contribution protected" : "new contribution"}{" "}
           <span className="text-faint">({sourceText(f.mechanism)})</span></li>
-        {f.margin ? shown("Margin", f.margin, true) : <li>Margin: none yet{readOnly ? "" : " (set the fabric's default in Setup › Fabrics, or one here)"}</li>}
+        {f.margin ? shown("Margin", f.margin, true) : <li>Margin: none yet{readOnly ? "" : <> (set the fabric&apos;s default in{" "}
+          <Link href="/admin/scoring/fabrics" className="text-link hover:underline">Setup › Fabrics</Link>, or one here)</>}</li>}
         {f.mechanism.value === "protect" && shown("Loss rate without it", f.loss_without, true)}
         {f.mechanism.value === "protect" && shown("with it", f.loss_with, true)}
         {shown(f.mechanism.value === "protect" ? "Revenue at stake, a year" : "Revenue, a year", f.revenue)}
@@ -144,11 +166,6 @@ export default function FinanceCard({ f, techId, fabricId, onChanged, readOnly }
           cost_per_outcome: "Measured cost per outcome" }[k]}: <span className="text-ink">{f.notes[k]!.value}</span></li>)}
       </ul>
       <p className="mt-1 text-[11.5px] text-faint">Worked out by code from figures people enter; the model never writes one.</p>
-      {!readOnly && !editing && (
-        <button type="button" onClick={() => { setForm(start()); setEditing(true); }} className="mt-2 text-[13px] text-link hover:underline">
-          {f.entered ? "Change the figures" : "Enter the figures"}
-        </button>
-      )}
       {!readOnly && editing && (
         <form className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 rounded-lg border border-line bg-ground/40 p-3 sm:grid-cols-4" onSubmit={async (e) => {
           e.preventDefault();

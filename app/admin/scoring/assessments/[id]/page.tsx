@@ -324,13 +324,9 @@ function ScoringRun() {
                 onConfirm={async () => { await resumeAssessment(id); setNotice({ text: "Resumed: finishing the missing work.", failed: false }); load(); }} />
             )}
             {!running && run.assessments.length > 0 && (
-              <button
-                onClick={() => act(`/api/scoring/runs/${id}/recompute`, "Scores and priorities redone with today's weights and cut-points.", "Scores not redone")}
-                title="Work out the three scores and the priority again from the stored measure scores, with today's weights and cut-points: no model calls"
-                className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
-              >
-                Redo scores with today&apos;s weights (free)
-              </button>
+<ConfirmAction label="Redo scores" cost="no model calls" secondary confirmLabel="Redo"
+                question="Work out the three scores and the priorities again from the stored measure scores, with today's weights and cut-points? No model calls. Priorities may move; leaders see that only after the next publish."
+                onConfirm={() => act(`/api/scoring/runs/${id}/recompute`, "Scores and priorities redone with today's weights and cut-points.", "Scores not redone")} />
             )}
           </>
         )}

@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import ListEditor from "@/components/ListEditor";
+import Hood from "@/components/Hood";
 import PageHeader from "@/components/PageHeader";
 import RadarSettings from "@/components/RadarSettings";
 import SavedNote from "@/components/SavedNote";
+import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 
 type CrawlSettings = {
@@ -25,10 +27,12 @@ export default function SettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [kept, setKept] = useState(""); // the saved values, to say when the form has edits not saved yet
 
   useEffect(() => {
-    fetchJson<CrawlSettings>("/api/settings/crawl").then(setForm).catch(setError);
+    fetchJson<CrawlSettings>("/api/settings/crawl").then((c) => { setForm(c); setKept(JSON.stringify(c)); }).catch(setError);
   }, []);
+  const dirty = !!form && JSON.stringify(form) !== kept;
 
   async function save() {
     if (!form) return;
@@ -44,6 +48,7 @@ export default function SettingsPage() {
         lookback_days: Number(form.lookback_days),
       });
       setForm(updated);
+      setKept(JSON.stringify(updated));
       setSaved(true);
       configChanged();
     } catch (e) {
@@ -58,7 +63,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings"
+      <PageHeader title="Settings" right={<TechnicalDetailsSwitch />}
         intro="Limits for collecting pages, for judging each technology's evidence and for Find evidence, and the time zone used by default."
         help={<>
           <li>Collecting pages: how far the crawler goes in every collection and how long pages are read. Judging
@@ -69,8 +74,9 @@ export default function SettingsPage() {
           <li>Page budget per source: the most pages one collection takes from each website, and from each data
             source, shared across its saved searches. A website that reaches it is noted under Coverage on
             Operations.</li>
-          <li>Page part size and parts processed in parallel: a long page is split into parts and read in parallel,
-            and nothing is cut. Each part is one model call.</li>
+          <li>With Technical details on: page part size and parts processed in parallel (a long page is split into
+            parts and read in parallel, nothing is cut, each part is one model call), and the most tokens one judging
+            run may use.</li>
           <li>First-run lookback: how far back a new saved search reaches the first time it runs.</li>
           <li>Saving costs nothing; the settings are read at the start of each collection. A bigger budget means
             more pages, and each new or changed page uses at least one model call.</li>
@@ -103,6 +109,7 @@ export default function SettingsPage() {
                   everything collected is kept.
                 </span>
               </label>
+              <Hood>
               <label className="block text-sm font-medium">
                 Page part size (characters)
                 <input type="number" min={20000} className={field} value={form.page_part_chars}
@@ -116,6 +123,7 @@ export default function SettingsPage() {
                 <input type="number" min={1} max={16} className={field} value={form.page_part_concurrency}
                   onChange={number("page_part_concurrency")} />
               </label>
+              </Hood>
               <label className="block text-sm font-medium">
                 First-run lookback (days)
                 <input type="number" min={1} max={365} className={field} value={form.lookback_days}
@@ -132,6 +140,7 @@ export default function SettingsPage() {
             className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong disabled:opacity-50">
             {saving ? "Saving…" : "Save collection settings"}
           </button>
+          {dirty && <span className="ml-3 text-sm text-amber-800">Edits here aren&apos;t saved yet</span>}
         </form>
       )}
       <RadarSettings />

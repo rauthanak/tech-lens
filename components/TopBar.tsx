@@ -11,7 +11,7 @@ type Item = { href: string; label: string; active: (path: string) => boolean };
 const under = (prefix: string) => (path: string) => path === prefix || path.startsWith(prefix + "/");
 const SETUP_ROUTES = ["/admin/sources", "/admin/signals/list", "/admin/scoring/fabrics",
   "/admin/scoring/measures", "/admin/scoring/config", "/admin/scoring/pending", "/admin/prompts",
-  "/admin/changes", "/admin/classification", "/admin/path", "/admin/mechanisms", "/admin/import", "/admin/finance"];
+  "/admin/changes", "/admin/classification", "/admin/path", "/admin/mechanisms", "/admin/finance"];
 
 // One technology's result in one fabric (/admin/scoring/assessments/{run}/{id})
 // is read as part of that technology, so Technologies stays lit there; the
@@ -24,7 +24,7 @@ const oneAssessment = (path: string) => /^\/admin\/scoring\/assessments\/[^/]+\/
 const MAIN: Item[] = [
   { href: "/admin", label: "Briefing", active: (p) => p === "/admin" },
   { href: "/admin/technologies", label: "Technologies",
-    active: (p) => under("/admin/technologies")(p) || oneAssessment(p) },
+    active: (p) => under("/admin/technologies")(p) || under("/admin/import")(p) || oneAssessment(p) },
   { href: "/admin/scoring/pov", label: "Points of View", active: under("/admin/scoring/pov") },
 ];
 
@@ -48,7 +48,7 @@ export default function TopBar() {
           ? "border-azure text-white" : "border-transparent text-white/70 hover:text-white"}`}>
         {item.label}
         {item.label === "Setup" && changes > 0 && (
-          <span title="Setup edits not yet saved into the starting files a fresh install loads"
+          <span title="Setup edits not yet kept as the defaults"
             className="rounded-full bg-azure px-1.5 font-mono text-[10px] text-ink">
             {changes}
           </span>

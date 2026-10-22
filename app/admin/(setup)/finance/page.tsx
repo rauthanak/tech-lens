@@ -7,7 +7,7 @@ import BackendError from "@/components/BackendError";
 import FinanceCard from "@/components/FinanceCard";
 import PageHeader from "@/components/PageHeader";
 import { fetchJson } from "@/lib/api";
-import { figureText, type Figure, type Finance, money, percent, sourceText } from "@/lib/value";
+import { figureText, type Figure, type Finance, FINANCE_SHOWN, money, percent, sourceText } from "@/lib/value";
 
 type Row = Finance & { tech_id: string; name: string; fabric_id: string; fabric: string };
 const HEADS = ["Technology", "Tata's step", "Margin", "Revenue, a year", "Upfront", "Running, a year", "Contribution, a year",
@@ -126,5 +126,16 @@ function FinanceTable() {
 }
 
 export default function FinancePage() {
+  if (!FINANCE_SHOWN) return (
+    <div>
+      <PageHeader title="Finance" intro="Set aside for now." />
+      <p className="mt-4 max-w-2xl rounded-card border border-line bg-white px-5 py-4 text-sm text-neutral-700">
+        Contribution, payback and break-even are set aside until Tata has discussed how it wants to judge an emerging
+        technology&apos;s business case. Nothing asks for them or shows them meanwhile; any figures already entered are kept.
+        The proof each step on the path to scale needs (a measured cost per outcome, a named buyer, a price) is entered on
+        the technology&apos;s fabric tab, under Tata&apos;s plan.
+      </p>
+    </div>
+  );
   return <Suspense fallback={null}><FinanceTable /></Suspense>;
 }

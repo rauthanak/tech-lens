@@ -4,9 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
-import GateList from "@/components/GateList";
+import TodoStrip from "@/components/GateList";
 import PageHeader from "@/components/PageHeader";
-import PublishEdition from "@/components/PublishEdition";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { fetchRunsPreview, type RunsPreview } from "@/lib/actions";
@@ -59,6 +58,7 @@ function RadarBriefing() {
   const type = params.get("type") ?? "";
   const tech = params.get("tech") ?? "";
   const source = params.get("source") ?? "";
+  const older = params.get("band") === "older"; // the findings' tab: recent findings, or older articles found now
 
   const [summary, setSummary] = useState<BriefingSummary | null>(null);
   const [items, setItems] = useState<FoundHit[] | null>(null);
@@ -95,7 +95,7 @@ function RadarBriefing() {
   const listUrl = useCallback((s: BriefingSummary, skip: number) => `/api/signals/found?${query({
     sort: "briefing", limit: String(PAGE), skip: String(skip),
     ...("run_id" in s.scope ? { run_id: s.scope.run_id } : { since: s.scope.from, until: s.scope.to }),
-    tech: tech || null, source_id: source || null, signal_id: type || null })}`, [tech, source, type]);
+    tech: tech || null, source_id: source || null, signal_id: type || null, older: String(older) })}`, [tech, source, type, older]);
 
   useEffect(() => {
     if (!summary) return;
@@ -134,6 +134,15 @@ function RadarBriefing() {
   // per band and type, counts for the headers (the summary has them per type)
   const bandCount = (older: boolean) => (typeRow ? (older ? typeRow.older : typeRow.count - typeRow.older)
     : s ? (older ? s.counts.older : s.counts.findings - s.counts.older) : 0);
+  const window_ = (
+    <label>
+      <span className="sr-only">Window</span>
+      <select value={days} onChange={(e) => setParams({ days: e.target.value === "7" ? null : e.target.value })}
+        className="rounded-full border border-line bg-white px-3 py-0.5 text-[14px] text-ink">
+        {WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.label}</option>)}
+      </select>
+    </label>
+  );
   const typeCount = (id: string, older: boolean) => {
     const t = s?.types.find((x) => x.signal_id === id);
     return t ? (older ? t.older : t.count - t.older) : 0;
@@ -146,36 +155,30 @@ function RadarBriefing() {
         help={<>
           <li>Each row is a finding: one development found on a page, like a funding round, a product launch or a
             partnership. Click it for the details, the quote and the source; a technology tag opens that technology.</li>
-          <li>Recent findings were published within 30 days of being collected, or give no publication date (their
-            row shows when they were collected instead). Older articles were published earlier and only found
-            now.</li>
+          <li>What the radar found has two tabs. New: published within 30 days of the radar collecting it, or with no
+            publication date (its row says so, with when it was collected). Old: published more than 30 days before the
+            radar collected it, background rather than new. Either can be an article, a paper or a report.</li>
           <li>Your signal types come first, in the order of your signal list, then Other: notable findings that
             aren&apos;t on the list. Reorder the list in{" "}
             <Link href="/admin/signals/list" className="text-link hover:underline">Setup → Signal list</Link>, at no
             model cost.</li>
-          <li>The rail counts each type; click one to show only that type. The window menu sets how far back to look,
-            by collection date.</li>
-          <li>The three cards at the top are your to-do: what to settle before technologies are scored, what to settle
-            before a Point of View goes to leaders, and publishing what leaders see. Closed, each says what waits; click
-            its title to open it, and this browser remembers which you left open. Each row counts technologies; its
-            sentence opens where it&apos;s done. A row that is one decision is done in place: a run (classify, assess,
-            write) shows its model calls and asks before starting, and each possibly nascent technology gets Yes or
-            No.</li>
+          <li>The rail counts each type in the tab you&apos;re on; click one to show only that type. The window menu, in
+            the line under the title, sets how far back to look, by collection date.</li>
+          <li>To do, at the top, one strip of three columns: what to settle before technologies are scored, what to
+            settle before a Point of View goes to leaders (advice, not a gate), and Publish to leaders, with what has
+            changed since the last edition. Each column lists what waits first; Open (or its title) shows its full list
+            below the strip as cards, and this browser remembers which you left open. Each card counts technologies; its
+            sentence opens where it&apos;s done, and Which ones lists them. A card that is one decision is done in
+            place: a run (classify, assess, write) shows its model calls and asks before starting, and each possibly
+            nascent technology gets Yes or No.</li>
+          <li>Publish to leaders takes a copy of every Point of View and placement as they stand: leaders see only that
+            copy, never your work in progress, until the next publish. It rewrites nothing, costs no model calls and
+            keeps the editions before it.</li>
         </>}
-        right={!run && (
-        <label className="shrink-0">
-          <span className="sr-only">Window</span>
-          <select value={days} onChange={(e) => setParams({ days: e.target.value === "7" ? null : e.target.value })}
-            className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm text-ink">
-            {WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.label}</option>)}
-          </select>
-        </label>
-      )}>
+      >
         {s && (
-          <p className="mt-2 text-[14.5px] text-muted">
-            {runScope && (
-              <>Collection of {formatDay(runScope.started_at)} · {runState(runScope)} · </>
-            )}
+          <p className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[14.5px] text-muted">
+            {runScope ? <>Collection of {formatDay(runScope.started_at)} · {runState(runScope)} · </> : window_}
             <b className="font-semibold text-ink">{s.counts.findings.toLocaleString()}</b>{" "}
             {s.counts.findings === 1 ? "finding" : "findings"} from{" "}
             <b className="font-semibold text-ink">{s.counts.pages.toLocaleString()}</b> new or changed{" "}
@@ -202,8 +205,27 @@ function RadarBriefing() {
         </div>
       ) : (
         <>
-          <GateList />
-          <div className="mt-3"><PublishEdition /></div>
+          <h2 className="mt-6 text-lg font-semibold">To do</h2>
+          <p className="text-[13px] text-muted">What waits on you, in the order the radar&apos;s process needs it.</p>
+          <TodoStrip />
+
+          <h2 className="mt-8 text-lg font-semibold">What the radar found</h2>
+          {s && (
+            <div role="tablist" aria-label="Findings" className="mt-2 flex flex-wrap items-baseline gap-1.5">
+              {([[false, "New", s.counts.findings - s.counts.older], [true, "Old", s.counts.older]] as const)
+                .map(([band, name, n]) => (
+                  <button key={name} type="button" role="tab" aria-selected={older === band}
+                    onClick={() => setParams({ band: band ? "older" : null })}
+                    className={`rounded-full border px-3.5 py-1 text-[13px] ${older === band ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground"}`}>
+                    {name} · {n.toLocaleString()}
+                  </button>
+                ))}
+              <span className="text-[12.5px] text-muted">
+                {older ? "Published more than 30 days before the radar collected it: background, not new."
+                  : "Published within 30 days of the radar collecting it, or with no publication date; your signal types first."}
+              </span>
+            </div>
+          )}
 
           {s && (
             <div className={`mt-6 grid grid-cols-1 gap-7 min-[900px]:grid-cols-[240px_minmax(0,1fr)] ${docked
@@ -214,7 +236,9 @@ function RadarBriefing() {
                   Found in this {runScope ? "collection" : "window"}
                 </h2>
                 <div className="flex gap-1.5 overflow-x-auto pb-1.5 min-[900px]:grid min-[900px]:gap-px min-[900px]:overflow-visible min-[900px]:pb-0">
-                  {[{ signal_id: "", name: "All findings", count: s.counts.findings }, ...s.types].map((t) => {
+                  {[{ signal_id: "", name: "All findings", count: bandCount(older), older: 0 }, ...s.types]
+                    .map((t) => ({ ...t, count: t.signal_id ? typeCount(t.signal_id, older) : t.count }))
+                    .filter((t) => !t.signal_id || t.count > 0 || t.signal_id === type).map((t) => {
                     const on = t.signal_id === type;
                     return (
                       <button key={t.signal_id || "all"} type="button" aria-pressed={on}
@@ -243,7 +267,8 @@ function RadarBriefing() {
 
                 {items && items.length === 0 && (
                   <div className="rounded-card border border-line bg-white px-6 py-5 text-sm">
-                    {type ? `No ${typeName(type)} findings here.`
+                    {older && !type ? "No older articles were found in this window."
+                      : type ? `No ${typeName(type)} findings here.`
                       : runScope ? "This collection found nothing new."
                         : `No findings in the ${WINDOWS.find((w) => w.days === days)!.label.toLowerCase()}.`}
                     {!type && !runScope && s.freshness && ` The last collection was ${formatDay(s.freshness.finished_at)}.`}
@@ -257,7 +282,7 @@ function RadarBriefing() {
                 )}
 
                 {items && items.length > 0 && (
-                  <Findings items={items} grouped={!type} typeName={typeName} bandCount={bandCount} typeCount={typeCount} />
+                  <Findings items={items} grouped={!type} typeName={typeName} typeCount={(id) => typeCount(id, older)} />
                 )}
 
                 {items && items.length > 0 && (
@@ -290,48 +315,33 @@ function RadarBriefing() {
   );
 }
 
-/** The findings in two bands, recent and older, each with a small header per
- *  signal type (left out when one type is chosen). */
-function Findings({ items, grouped, typeName, bandCount, typeCount }: {
+/** One tab's findings, with a small header per signal type (left out when
+ *  one type is chosen). */
+function Findings({ items, grouped, typeName, typeCount }: {
   items: FoundHit[];
   grouped: boolean;
   typeName: (id: string) => string;
-  bandCount: (older: boolean) => number;
-  typeCount: (id: string, older: boolean) => number;
+  typeCount: (id: string) => number;
 }) {
-  const bands = [false, true]
-    .map((older) => ({ older, rows: items.filter((h) => h.older === older) }))
-    .filter((b) => b.rows.length > 0);
   return (
-    <div className="space-y-5">
-      {bands.map(({ older, rows }) => (
-        <section key={String(older)} className="overflow-hidden rounded-card border border-line bg-white">
-          <header className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-neutral-100 px-5 py-3.5 ${older ? "bg-neutral-50" : ""}`}>
-            <h2 className="text-[17px] font-semibold">{older ? "Older articles" : "Recent findings"} · {bandCount(older)}</h2>
-            <p className="text-[13px] text-muted">
-              {older ? "Published more than 30 days before they were collected: found now, but not new."
-                : "Published within 30 days of being collected, or undated; your signal types first, in your signal list's order, then other findings."}
-            </p>
-          </header>
-          {rows.map((h, i) => {
-            const head = grouped && (i === 0 || rows[i - 1].signal_id !== h.signal_id);
-            return (
-              <Fragment key={`${h.doc_id}:${h.n}`}>
-                {head && (
-                  <div className={`flex gap-2 px-5 pb-1 pt-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy ${i > 0 ? "border-t border-neutral-100" : ""}`}>
-                    {h.signal_id === "other" ? "Other · not on your signal list" : typeName(h.signal_id)}
-                    <span className="text-faint">{typeCount(h.signal_id, older)}</span>
-                  </div>
-                )}
-                <div className={!head && i > 0 ? "border-t border-neutral-100" : ""}>
-                  <SignalItem item={h} />
-                </div>
-              </Fragment>
-            );
-          })}
-        </section>
-      ))}
-    </div>
+    <section className="overflow-hidden rounded-card border border-line bg-white">
+      {items.map((h, i) => {
+        const head = grouped && (i === 0 || items[i - 1].signal_id !== h.signal_id);
+        return (
+          <Fragment key={`${h.doc_id}:${h.n}`}>
+            {head && (
+              <div className={`flex gap-2 px-5 pb-1 pt-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy ${i > 0 ? "border-t border-neutral-100" : ""}`}>
+                {h.signal_id === "other" ? "Other · not on your signal list" : typeName(h.signal_id)}
+                <span className="text-faint">{typeCount(h.signal_id)}</span>
+              </div>
+            )}
+            <div className={!head && i > 0 ? "border-t border-neutral-100" : ""}>
+              <SignalItem item={h} />
+            </div>
+          </Fragment>
+        );
+      })}
+    </section>
   );
 }
 

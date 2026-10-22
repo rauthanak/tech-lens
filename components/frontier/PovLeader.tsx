@@ -13,7 +13,7 @@ export default function PovLeader({ fabrics }: { fabrics: NonNullable<EditionPov
       <h2 className="font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500">What Tata has committed</h2>
       {none ? (
         <p className="mt-1 text-neutral-700">
-          Nothing recorded yet: <b>Undefined</b> (no owner) in {rows.length === 1 ? rows[0].fabric : `all ${rows.length} fabrics`}.
+          Nothing recorded yet: <b>no owner</b> in {rows.length === 1 ? rows[0].fabric : `all ${rows.length} fabrics`}.
         </p>
       ) : (
         <ul className="mt-1.5 space-y-1">

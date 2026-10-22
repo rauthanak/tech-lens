@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import ConfirmAction from "@/components/ConfirmAction";
+import OperationsTabs from "@/components/OperationsTabs";
 import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
 import { calls, startAssessment } from "@/lib/actions";
@@ -61,7 +62,8 @@ export default function AssessmentsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Operations" title="Assessment runs"
+      <OperationsTabs />
+      <PageHeader title="Assessment runs"
         intro="Every assessment run: a batch of technologies scored together. Start one here."
         help={<>
           <li>An assessment scores a technology in each fabric it touches, on twelve measures from 0 to 10, using
@@ -84,7 +86,7 @@ export default function AssessmentsPage() {
       {toAssess && (
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-card border border-azure/30 bg-azure/5 px-5 py-3 text-sm">
           <span>{plural(toAssess.count, "technology has", "technologies have")} new pages since their assessment.</span>
-          <ConfirmAction label="Assess them" cost={calls(toAssess.calls)}
+          <ConfirmAction label="Assess them again" cost={calls(toAssess.calls)}
             question={`Assess ${plural(toAssess.count, "technology", "technologies")} with new pages? About ${plural(toAssess.calls, "model call")} (up to ${toAssess.calls_max}).`}
             disabled={blocked} onConfirm={() => startAssessment(toAssess.tech_ids)} />
         </div>

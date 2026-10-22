@@ -7,7 +7,7 @@ import SavedNote from "@/components/SavedNote";
 import { startClassify } from "@/lib/actions";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import type { ListItem } from "@/lib/classification";
-import { plural } from "@/lib/format";
+import { formatDate, plural } from "@/lib/format";
 
 const field = "mt-1 block w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
 
@@ -123,7 +123,7 @@ export default function ListItems({ list, noun, fields, canAdd = true, canRemove
           <button key={i._id} type="button" onClick={() => { setEdit({ ...i }); setSaveError(null); setSaved(false); }}
             className="flex w-full items-baseline gap-4 px-4 py-2.5 text-left hover:bg-neutral-50">
             {i.level != null && <span className="w-6 shrink-0 font-mono text-sm">{i.level}</span>}
-            {i.date && <span className="shrink-0 font-mono text-xs text-muted">{i.date}</span>}
+            {i.date && <span className="w-24 shrink-0 text-xs text-muted">{formatDate(i.date, true)}</span>}
             <span className="min-w-0 flex-1">
               <span className="font-medium">{i.name}</span>
               {i.catch_all && <span className="ml-2 rounded bg-neutral-100 px-1.5 text-[11px] text-muted">catch-all</span>}
@@ -138,6 +138,7 @@ export default function ListItems({ list, noun, fields, canAdd = true, canRemove
               })}
             </span>
             {technologies && <span className="shrink-0 text-xs tabular-nums text-muted">{plural(i.technologies ?? 0, "technology", "technologies")}</span>}
+            <span className="shrink-0 text-sm text-link">Edit</span>
           </button>
         ))}
         {edit && !edit._id ? form : canAdd && (

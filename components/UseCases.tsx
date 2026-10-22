@@ -1,20 +1,40 @@
 "use client";
 
+import { useState } from "react";
 import ActButton from "@/components/ActButton";
 import AddLink from "@/components/AddLink";
 import FindEvidence from "@/components/FindEvidence";
 import LeverChain from "@/components/LeverChain";
-import PageRefs from "@/components/PageRefs";
+import PageRefs, { FoldedRefs } from "@/components/PageRefs";
 import { decide, undo } from "@/lib/decisions";
 import type { Pages, UseCase, ValueLists } from "@/lib/value";
+
+/** "Capital needed: heavy", with its reason in full on the Point of View, or
+ *  one click away (`folded`, the fabric tab). */
+function Capital({ capital, folded }: { capital: UseCase["capital"]; folded?: boolean }) {
+  const [why, setWhy] = useState(false);
+  const reason = capital?.why ? capital.why.charAt(0).toUpperCase() + capital.why.slice(1) : "";
+  return (
+    <p className="text-[12.5px] text-muted">
+      <span className="font-medium text-ink">Capital needed:</span>{" "}
+      {!capital?.direction ? "not given (an earlier assessment; the next one gives it)" : <>
+        <b className="text-ink">{capital.direction}</b>
+        {reason && (folded && !why
+          ? <> · <button type="button" onClick={() => setWhy(true)} className="text-link hover:underline">why</button></>
+          : <>. {reason}</>)}
+      </>}
+    </p>
+  );
+}
 
 /** Where the value lands in one fabric: the fabric's key metrics, then the
  *  use cases its pages support, each with its two levers as chains (lever 1,
  *  contribution; lever 2, delivery cost) and the capital it needs; with none,
  *  what evidence would show one, Find use cases, and any suggested ones (not
  *  from the pages) for a person to accept or reject. A mapping that failed
- *  says why. */
-export default function UseCases({ cases, suggested, none, failed, decisions, pages, lists, techId, fabricId, onChanged, readOnly }: {
+ *  says why. `compact` (the fabric tab): sources folded into "n sources", the
+ *  capital's reason one click away, each lever on one line. */
+export default function UseCases({ cases, suggested, none, failed, decisions, pages, lists, techId, fabricId, onChanged, readOnly, compact }: {
   cases: UseCase[];
   suggested: UseCase[];
   none: { reason: string; evidence_needed: string } | null;
@@ -26,6 +46,7 @@ export default function UseCases({ cases, suggested, none, failed, decisions, pa
   fabricId: string;
   onChanged?: () => void;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
   const metrics = lists.fabrics[fabricId]?.key_metrics;
   const order = (id: string) => lists.levers[id]?.order ?? 9;
@@ -53,16 +74,13 @@ export default function UseCases({ cases, suggested, none, failed, decisions, pa
         <div key={uc.key}>
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="font-semibold">{uc.rank}. {uc.title}</span>
-            <PageRefs ids={uc.pages} pages={pages} />
+            {compact ? <FoldedRefs ids={uc.pages} pages={pages} /> : <PageRefs ids={uc.pages} pages={pages} />}
           </div>
-          <p className="text-[12.5px] text-muted">
-            <span className="font-medium text-ink">Capital needed:</span>{" "}
-            {uc.capital?.direction ? <><b className="text-ink">{uc.capital.direction}</b>, {uc.capital.why}</> : "not given (an earlier assessment; the next one gives it)"}
-          </p>
-          <div className="mt-1.5 space-y-2">
+          <Capital capital={uc.capital} folded={compact} />
+          <div className={compact ? "mt-1 space-y-1.5" : "mt-1.5 space-y-2"}>
             {[...(uc.levers ?? [])].sort((x, y) => (x.order ?? order(x.lever_id)) - (y.order ?? order(y.lever_id))).map((lv) => (
               <LeverChain key={lv.lever_id} lever={lv} name={lists.levers[lv.lever_id]?.name} order={lists.levers[lv.lever_id]?.order}
-                mechanism={lists.mechanisms[lv.mechanism_id]} pages={pages} />
+                mechanism={lists.mechanisms[lv.mechanism_id]} pages={pages} compact={compact} />
             ))}
             {(uc.levers?.length ?? 0) < 2 && (
               <p className="text-[12px] text-muted">One lever only: this is from an earlier assessment. The next one gives both of the fabric&apos;s levers.</p>

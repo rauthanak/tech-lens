@@ -7,7 +7,7 @@ import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import { Fabric, OpenQuestionBadge } from "@/lib/scoring";
-import { useValueLists } from "@/lib/value";
+import { FINANCE_SHOWN, useValueLists } from "@/lib/value";
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -88,6 +88,7 @@ export default function FabricsPage() {
               onClick={() => {
                 setSelected({ ...f });
                 setSaveError(null);
+                requestAnimationFrame(() => document.getElementById("fabric-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
               }}
               className={`flex flex-col rounded-card border border-line bg-white px-5 py-4 text-left hover:border-neutral-400 ${
                 selected?._id === f._id ? "ring-2 ring-azure" : ""
@@ -97,9 +98,8 @@ export default function FabricsPage() {
                 <FabricLabel id={f._id} name={f.name} />
                 <span className="flex items-center gap-2">
                   <OpenQuestionBadge question={f.open_question} />
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${f.enabled ? "bg-azure" : "bg-neutral-300"}`}
-                  />
+                  {!f.enabled && <span className="text-xs text-muted">Switched off</span>}
+                  <span className="text-sm text-link">Edit</span>
                 </span>
               </div>
               <p className="mt-1.5 text-sm text-neutral-600">{f.definition}</p>
@@ -114,8 +114,8 @@ export default function FabricsPage() {
       )}
 
       {selected && (
-        <form
-          className="mt-7 space-y-4 rounded-card border border-line bg-white px-6 py-5"
+        <form id="fabric-form"
+          className="mt-7 scroll-mt-20 space-y-4 rounded-card border border-line bg-white px-6 py-5"
           onSubmit={(e) => {
             e.preventDefault();
             save();
@@ -175,7 +175,7 @@ export default function FabricsPage() {
               <input className={field} value={selected.cautions ?? ""} onChange={(e) => setSelected({ ...selected, cautions: e.target.value })} />
             </label>
           </fieldset>
-          <fieldset className="space-y-3 border-t border-neutral-100 pt-4">
+          {FINANCE_SHOWN && <fieldset className="space-y-3 border-t border-neutral-100 pt-4">
             <legend className="text-sm font-semibold">Finance defaults</legend>
             <p className="text-xs text-neutral-500">Used on the finance screen of every technology in this fabric unless one sets its own.
               Shares, from 0 to 100%; leave blank until Tata gives them. Loss rates apply where the revenue counts as protected
@@ -192,7 +192,7 @@ export default function FabricsPage() {
                 </label>
               ))}
             </div>
-          </fieldset>
+          </fieldset>}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={selected.enabled}
               onChange={(e) => setSelected({ ...selected, enabled: e.target.checked })} />

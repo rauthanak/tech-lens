@@ -18,16 +18,6 @@ type Overview = {
   total_items: number;
 };
 
-function Tile({ label, value, note, href }: { label: string; value: string; note?: string; href: string }) {
-  return (
-    <Link href={href} className="rounded-card border border-line bg-white px-5 py-4 hover:border-neutral-400">
-      <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">{label}</div>
-      <div className="mt-1 text-[26px] font-semibold leading-tight">{value}</div>
-      {note && <div className="text-xs text-muted">{note}</div>}
-    </Link>
-  );
-}
-
 type Pending = Overview["pending"][number];
 
 /** Open questions with the same text, asked of several items, as one line. */
@@ -71,14 +61,16 @@ export default function ScoringOverview() {
 
       {data && (
         <>
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Tile label="Fabrics" value={`${data.fabrics.enabled} of ${data.fabrics.total}`} href="/admin/scoring/fabrics" />
-            <Tile label="Measures" value={String(data.measures.total)} href="/admin/scoring/measures" />
-            <Tile label="Open questions" value={String(data.pending.length)}
-              note={`still open, of ${data.total_items} setup items`} href="/admin/scoring/pending" />
-          </div>
+          <p className="mt-6 text-sm">
+            {data.pending.length
+              ? <>{data.pending.length} setup decisions wait on Tata&apos;s answer.{" "}
+                <Link href="/admin/scoring/pending" className="text-link hover:underline">Answer them →</Link></>
+              : "Every setup decision is settled."}{" "}
+            <span className="text-muted">{data.fabrics.enabled} of {data.fabrics.total} fabrics switched on;
+              {" "}{data.measures.total} measures.</span>
+          </p>
 
-          <section className="mt-8">
+          <section className="mt-6">
             <h2 className="text-lg font-semibold">How the three scores are made</h2>
             <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-4">
               {AXIS_ORDER.map((axis) => (

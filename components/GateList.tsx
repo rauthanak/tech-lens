@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import ActButton from "@/components/ActButton";
 import ConfirmAction from "@/components/ConfirmAction";
 import { NascentAnswer, type YesReplaces } from "@/components/NascentFlag";
+import { usePublish } from "@/components/PublishEdition";
 import { calls, resumeAssessment, startAssessment, startCheck, startClassify, writePovs } from "@/lib/actions";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
 import { plural } from "@/lib/format";
@@ -14,114 +15,109 @@ import { itemHref, itemSentence } from "@/lib/waiting";
 
 const SHOWN = 5;
 
-/** A row of either list: its sentence, its one action (cost first), and for
- *  each technology behind it, its own one-click answer where there is one. */
+/** A card of either list: its sentence, its one action (cost first), and
+ *  folded behind "Which ones", the technologies behind it, each with its own
+ *  one-click answer where there is one. */
 type Entry = { row: GateRow; action?: React.ReactNode; perTech?: (i: number) => React.ReactNode };
 
-function Row({ row, action, perTech }: Entry) {
+function Card({ row, action, perTech }: Entry) {
+  const [which, setWhich] = useState(false);
   const [all, setAll] = useState(false);
   const list = row.list ?? [];
   return (
-    <li className="py-3">
-      <div className="flex items-baseline gap-3">
-        <span className="w-10 shrink-0 text-right text-xl font-semibold tabular-nums">{row.count.toLocaleString()}</span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px]">
-            {row.href ? <Link href={row.href} className="hover:underline">{row.sentence} →</Link> : row.sentence}
-          </p>
-          {row.sub && <p className="mt-0.5 text-[12.5px] text-muted">{row.sub}</p>}
-          {action && <div className="mt-1.5">{action}</div>}
-          {list.length > 0 && (
-            <ul className="mt-1.5 space-y-1 text-[13px]">
-              {(all ? list : list.slice(0, SHOWN)).map((t, i) => (
-                <li key={`${i}:${t.href}`} className="flex flex-wrap items-baseline gap-x-2">
-                  <Link href={t.href} className="text-link hover:underline">{t.label}</Link>
-                  {perTech?.(i)}
-                  {t.note && <span className="basis-full text-muted">{t.note}</span>}
-                </li>
-              ))}
-              {list.length > SHOWN && (
-                <li>
-                  <button type="button" onClick={() => setAll(!all)} className="text-link hover:underline">
-                    {all ? "Show fewer" : `Show all ${list.length}`}
-                  </button>
-                </li>
-              )}
-            </ul>
+    <li className="rounded-card border border-line px-4 py-3">
+      <p className="text-[14px] font-medium">
+        {row.href ? <Link href={row.href} className="hover:underline">{row.sentence} →</Link> : row.sentence}
+      </p>
+      {row.sub && <p className="mt-0.5 text-[12.5px] text-muted">{row.sub}</p>}
+      {action && <div className="mt-2">{action}</div>}
+      {list.length > 0 && (
+        <button type="button" aria-expanded={which} onClick={() => setWhich(!which)}
+          className="mt-1.5 text-[13px] text-link hover:underline">
+          {which ? "Hide ▴" : perTech ? "Which ones, to answer each ▾" : "Which ones ▾"}
+        </button>
+      )}
+      {which && (
+        <ul className="mt-1.5 space-y-1 text-[13px]">
+          {(all ? list : list.slice(0, SHOWN)).map((t, i) => (
+            <li key={`${i}:${t.href}`} className="flex flex-wrap items-baseline gap-x-2">
+              <Link href={t.href} className="text-link hover:underline">{t.label}</Link>
+              {perTech?.(i)}
+              {t.note && <span className="basis-full text-muted">{t.note}</span>}
+            </li>
+          ))}
+          {list.length > SHOWN && (
+            <li>
+              <button type="button" onClick={() => setAll(!all)} className="text-link hover:underline">
+                {all ? "Show fewer" : `Show all ${list.length}`}
+              </button>
+            </li>
           )}
-        </div>
-      </div>
+        </ul>
+      )}
     </li>
   );
 }
 
-/** A Briefing card that folds: its title and what waits, always; open, its
- *  intro and the rest. Closed until opened; open or closed is
- *  remembered in this browser, per card. */
-export function BriefingCard({ id, title, summary, intro, children }: {
-  id: string;
-  title: string;
-  summary?: React.ReactNode;
-  intro: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  const key = `tech-lens:briefing-open:${id}`;
-  useEffect(() => {
-    try {
-      if (ref.current && window.localStorage.getItem(key) === "open") ref.current.open = true;
-    } catch {
-      // storage unavailable: it stays closed
-    }
-  }, [key]);
-  const remember = (open: boolean) => {
-    try {
-      window.localStorage.setItem(key, open ? "open" : "closed");
-    } catch {
-      // storage unavailable: nothing to remember
-    }
-  };
-  return (
-    <details ref={ref} onToggle={(e) => remember(e.currentTarget.open)} aria-label={title}
-      className="group rounded-card border border-line bg-white px-5 py-4">
-      <summary className="flex cursor-pointer list-none flex-wrap items-baseline gap-x-2.5 gap-y-0.5 [&::-webkit-details-marker]:hidden">
-        <span aria-hidden className="inline-block w-3 text-[11px] text-muted transition-transform group-open:rotate-90">▶</span>
-        <h2 className="text-[17px] font-semibold">{title}</h2>
-        {/* beside the title, or under it on narrow screens */}
-        {summary && <span className="basis-full pl-5 text-[13.5px] text-muted sm:basis-auto sm:pl-0">
-          <span className="hidden sm:inline">· </span>{summary}</span>}
-      </summary>
-      <p className="mt-1 pl-5 text-[13px] text-muted">{intro}</p>
-      <div className="pl-5">{children}</div>
-    </details>
-  );
+const PEEK = 3; // the rows a column shows before "and n more"
+
+// which column's full list is open, remembered in this browser (as lib/hood does)
+const OPEN_KEY = "tech-lens:briefing-todo";
+const OPEN_EVENT = "tech-lens:briefing-todo";
+function readOpen(): string | null {
+  try { return window.localStorage.getItem(OPEN_KEY); } catch { return null; }
+}
+function subscribe(onChange: () => void): () => void {
+  window.addEventListener(OPEN_EVENT, onChange);
+  return () => window.removeEventListener(OPEN_EVENT, onChange);
+}
+/** Open one of the strip's columns, for a link from elsewhere ("publish" from a Point of View). */
+export function openTodo(id: string | null): void {
+  try {
+    if (id) window.localStorage.setItem(OPEN_KEY, id);
+    else window.localStorage.removeItem(OPEN_KEY);
+  } catch { /* storage unavailable: nothing to remember */ }
+  window.dispatchEvent(new Event(OPEN_EVENT));
 }
 
-/** One of the two lists, as a folding card: closed, how many things wait and
- *  how many items they hold in all (a technology counts once per row). */
-function Card({ id, title, intro, rows, empty, loaded }: {
-  id: string; title: string; intro: string; rows: Entry[]; empty: string; loaded: boolean;
+/** One column of the To do strip: its title, the first rows in a few words
+ *  (each opening where it's done), and Open, which shows the full list
+ *  below the strip. */
+function Column({ id, title, lines, more, open, onToggle }: {
+  id: string; title: string; lines: { key: string; text: string; href?: string }[] | null; more: number;
+  open: boolean; onToggle: () => void;
 }) {
-  const items = rows.reduce((n, r) => n + r.row.count, 0);
-  const summary = !loaded ? undefined : rows.length === 0 ? "Nothing waits"
-    : `${plural(rows.length, "thing")} to settle · ${plural(items, "item")}`;
   return (
-    <BriefingCard id={id} title={title} summary={summary} intro={intro}>
-      {rows.length === 0 ? loaded && <p className="mt-3 text-sm text-muted">{empty}</p> : (
-        <ul className="mt-1 divide-y divide-neutral-100">{rows.map((r) => <Row key={r.row.key} {...r} />)}</ul>
+    <div className={`px-5 py-4 ${open ? "bg-navy/[0.04]" : ""}`}>
+      <h3 className="flex items-baseline justify-between gap-3">
+        <button type="button" aria-expanded={open} aria-controls={`todo-${id}`} onClick={onToggle}
+          className="text-left text-[15px] font-semibold hover:underline">{title}</button>
+        <button type="button" aria-expanded={open} aria-controls={`todo-${id}`} onClick={onToggle}
+          className="shrink-0 text-[12.5px] text-link hover:underline">{open ? "Close ▴" : "Open ▾"}</button>
+      </h3>
+      {lines && (
+        <ul className="mt-1.5 space-y-1 text-[13px]">
+          {lines.length === 0 && <li className="text-muted">Nothing waits</li>}
+          {lines.map((l) => (
+            <li key={l.key}>{l.href ? <Link href={l.href} className="hover:underline">{l.text}</Link> : l.text}</li>
+          ))}
+          {more > 0 && <li><button type="button" onClick={onToggle} className="text-muted hover:underline">and {plural(more, "more thing")}</button></li>}
+        </ul>
       )}
-    </BriefingCard>
+    </div>
   );
 }
 
 const them = (n: number) => (n === 1 ? "it" : "them");
 
-/** The two to-do lists: what to settle before technologies are scored, and
- *  before a Point of View goes to leaders. Counted by
- *  technology, what blocks a placement first. A row that is one decision is
- *  done in place: a run with its cost shown first, or Yes / No per
- *  technology; the rest open the place where it's done. */
-export default function GateList() {
+/** The Briefing's To do, one strip of three columns: what to settle before
+ *  technologies are scored, before a Point of View goes to leaders, and
+ *  publishing the edition. Each column shows its first rows; Open shows its
+ *  full list below the strip as cards (remembered in this browser), where one
+ *  that is one decision is done in place: a run with its cost shown first, or Yes
+ *  / No per technology; the rest open the place where it's done. Counted by
+ *  technology, what blocks a placement first. */
+export default function TodoStrip() {
   const p = usePipeline();
   const [gates, setGates] = useState<{ gate1: GateItem[]; gate2: GateItem[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +130,9 @@ export default function GateList() {
   }, [progress, answered]);
   const again = () => setAnswered((n) => n + 1);
   const blocked = blockedReason(p, "assess");
+  const publish = usePublish();
+  const open = useSyncExternalStore(subscribe, readOpen, () => null);
+  const toggle = (id: string) => openTodo(open === id ? null : id);
 
   const pipelineAction = (i: AnalystItem): React.ReactNode => {
     switch (i.kind) {
@@ -190,17 +189,37 @@ export default function GateList() {
   };
   const gate1 = [...fromPipeline(["check", "resume", "assess"]), ...(gates?.gate1 ?? []).map(entry)];
   const gate2 = [...fromPipeline(["write"]), ...(gates?.gate2 ?? []).map(entry)];
+  const lists = [
+    { id: "before-scoring", title: "Before scoring", rows: gate1, intro: "What to settle before technologies are assessed.",
+      empty: "Nothing waits before scoring. The next collection may bring some." },
+    { id: "before-publishing", title: "Before publishing", rows: gate2,
+      intro: "What to settle before a Point of View goes to leaders. Advice, not a gate: whatever is unsettled goes out as it stands, with its reason.", empty: "Nothing waits before publishing." },
+  ];
+  const shown = lists.find((l) => l.id === open);
   return (
     <>
-      {error && <p className="mt-5 text-sm text-failed">The to-do lists didn&apos;t load: {error}</p>}
-      <div className="mt-5 space-y-3">
-        <Card id="before-scoring" title="Before scoring" rows={gate1} loaded={!!gates}
-          intro="What to settle before technologies are assessed."
-          empty="Nothing waits before scoring. The next collection may bring some." />
-        <Card id="before-publishing" title="Before publishing" rows={gate2} loaded={!!gates}
-          intro="What to settle before a Point of View goes to leaders."
-          empty="Nothing waits before publishing." />
-      </div>
+      {error && <p className="mt-3 text-sm text-failed">The to-do lists didn&apos;t load: {error}</p>}
+      <section aria-label="To do" className="mt-3 overflow-hidden rounded-card border border-line bg-white">
+        <div className="grid grid-cols-1 divide-y divide-neutral-100 md:grid-cols-3 md:divide-x md:divide-y-0">
+          {lists.map((l) => (
+            <Column key={l.id} id={l.id} title={l.title} open={open === l.id} onToggle={() => toggle(l.id)}
+              lines={gates ? l.rows.slice(0, PEEK).map((r) => ({ key: r.row.key, text: r.row.sentence, href: r.row.href })) : null}
+              more={Math.max(0, l.rows.length - PEEK)} />
+          ))}
+          <Column id="publish" title="Publish to leaders" open={open === "publish"} onToggle={() => toggle("publish")}
+            lines={publish.lines && publish.lines.map((t, i) => ({ key: String(i), text: t }))} more={0} />
+        </div>
+        {open && (
+          <div id={`todo-${open}`} className="border-t border-line px-5 py-4">
+            <p className="text-[13px] text-muted">{shown ? shown.intro : publish.intro}</p>
+            {shown ? (shown.rows.length === 0 ? <p className="mt-3 text-sm text-muted">{shown.empty}</p> : (
+              <ul className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {shown.rows.map((r) => <Card key={r.row.key} {...r} />)}
+              </ul>
+            )) : publish.panel}
+          </div>
+        )}
+      </section>
     </>
   );
 }

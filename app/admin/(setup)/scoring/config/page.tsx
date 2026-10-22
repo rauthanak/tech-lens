@@ -88,10 +88,12 @@ export default function ConfigPage() {
           <li>Priority grid: how soon it arrives (Maturity and Commercial adoption) crossed with how big the prize is
             (Addressable market, Growth, Disruption threat, Serviceable capture). Darker cells are more urgent, from
             P1 act now to P6 just watch.</li>
-          <li>Cut-points split each 0–10 score into three bands: &ldquo;4, 7&rdquo; means below 4, 4 to 7, and above
-            7. Raise them and fewer technologies reach P1.</li>
+          <li>The band edges split each 0–10 score into three bands: below 4, 4 to 7, and above 7 by default. Raise
+            them and fewer technologies reach P1.</li>
           <li>Grid changes apply to new assessment runs, and Redo scores on a run&apos;s page applies them to its
-            results, at no model cost. The evidence limit affects new runs only.</li>
+            results, at no model cost.</li>
+          <li>Technical details also shows the most evidence sent per technology (a safety limit) and how an
+            assessment calls the model; switching that asks first, with its cost.</li>
           </>} />
       </div>
 
@@ -153,6 +155,7 @@ export default function ConfigPage() {
         </section>
       )}
 
+      <Hood>
       {evidence && (
         <section className="rounded-card border border-line bg-white px-5 py-4">
           <div className="flex items-center justify-between">
@@ -170,31 +173,49 @@ export default function ConfigPage() {
         </section>
       )}
 
-      {engineDoc && (
-        <section className="rounded-card border border-line bg-white px-5 py-4">
-          <h2 className="font-semibold">How an assessment calls the model</h2>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="How an assessment calls the model">
-            {([["stacked", "Combined calls (recommended)", "One call per technology (which fabrics to assess, the measures judged for the technology as a whole, the metrics to watch), then one per fabric it touches. Its evidence is sent once and reused: about 1 call per technology, plus one per fabric."],
-              ["per_measure", "One call per measure (older)", "One call per measure in each fabric, plus the fabric choice and the metrics to watch, each sending the full evidence: about 30 per technology."]] as const)
-              .map(([mode, label, text]) => {
-                const on = (engineDoc.mode ?? "per_measure") === mode;
-                return (
-                  <button key={mode} type="button" role="radio" aria-checked={on} onClick={() => !on && patch("engine", { mode })}
-                    className={`rounded-lg border px-3.5 py-2.5 text-left ${on ? "border-navy bg-navy/[0.04]" : "border-line hover:bg-ground"}`}>
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <span className={`h-3 w-3 rounded-full border ${on ? "border-navy bg-navy" : "border-neutral-400"}`} />{label}
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-600">{text}</p>
-                  </button>
-                );
-              })}
-          </div>
-          <p className="mt-2 text-xs text-neutral-500">Clicking a choice saves it. It applies from the next assessment run; the estimate before a run uses it.</p>
-          {resultIn("engine")}
-        </section>
-      )}
+      {engineDoc && <EngineChoice mode={String(engineDoc.mode ?? "per_measure")} onSave={(mode) => patch("engine", { mode })}
+        result={resultIn("engine")} />}
+      </Hood>
       </div>
     </div>
+  );
+}
+
+const ENGINES = [
+  ["stacked", "Combined calls (recommended)", "One call per technology (which fabrics to assess, the measures judged for the technology as a whole, the metrics to watch), then one per fabric it touches. Its evidence is sent once and reused: about 1 call per technology, plus one per fabric.", "about 3"],
+  ["per_measure", "One call per measure (older)", "One call per measure in each fabric, plus the fabric choice and the metrics to watch, each sending the full evidence: about 30 per technology.", "about 30"],
+] as const;
+
+/** How an assessment calls the model: picking the other way asks first, with its cost. */
+function EngineChoice({ mode, onSave, result }: { mode: string; onSave: (mode: string) => void; result: React.ReactNode }) {
+  const [ask, setAsk] = useState<(typeof ENGINES)[number] | null>(null);
+  return (
+    <section className="rounded-card border border-line bg-white px-5 py-4">
+      <h2 className="font-semibold">How an assessment calls the model</h2>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="How an assessment calls the model">
+        {ENGINES.map((e) => {
+          const on = mode === e[0];
+          return (
+            <button key={e[0]} type="button" role="radio" aria-checked={on} onClick={() => setAsk(on ? null : e)}
+              className={`rounded-lg border px-3.5 py-2.5 text-left ${on ? "border-navy bg-navy/[0.04]" : "border-line hover:bg-ground"}`}>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className={`h-3 w-3 rounded-full border ${on ? "border-navy bg-navy" : "border-neutral-400"}`} />{e[1]}
+              </div>
+              <p className="mt-1 text-xs text-neutral-600">{e[2]}</p>
+            </button>
+          );
+        })}
+      </div>
+      {ask ? (
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          Switch to {ask[1].replace(/ \(.*\)$/, "").toLowerCase()}? From the next assessment run, {ask[3]} model calls per technology.
+          <button type="button" onClick={() => { onSave(ask[0]); setAsk(null); }}
+            className="rounded-full bg-navy px-3 py-1 text-xs font-medium text-white">Switch</button>
+          <button type="button" onClick={() => setAsk(null)} className="text-xs text-neutral-600 hover:text-black">Cancel</button>
+        </p>
+      ) : <p className="mt-2 text-xs text-neutral-500">Applies from the next assessment run; the estimate before a run uses it.</p>}
+      {result}
+    </section>
   );
 }
 
@@ -385,40 +406,37 @@ function OpenQuestionRow({ doc, onClear }: { doc: ConfigDoc; onClear: () => void
 }
 
 function GridCutpoints({ grid, onSave }: { grid: ConfigDoc; onSave: (c: Record<string, unknown>) => void }) {
-  const [timeline, setTimeline] = useState((grid.timeline_cutpoints as number[]).join(", "));
-  const [potential, setPotential] = useState((grid.potential_cutpoints as number[]).join(", "));
-  const [tLo, tHi] = (grid.timeline_cutpoints as number[]) ?? [4, 7];
+  const [t, setT] = useState((grid.timeline_cutpoints as number[]) ?? [4, 7]);
+  const [p, setP] = useState((grid.potential_cutpoints as number[]) ?? [4, 7]);
+  const bad = [t, p].some(([lo, hi]) => !(lo >= 0 && hi <= 10 && lo < hi));
+  const num = (v: number, set: (n: number) => void, label: string) => (
+    <input type="number" min={0} max={10} step={0.5} value={v} aria-label={label}
+      onChange={(e) => set(Number(e.target.value))} className={`${field} inline-block w-20`} />
+  );
+  const axis = (name: string, [lo, hi]: number[], set: (v: number[]) => void, words: [string, string, string]) => (
+    <div className="text-sm">
+      <div className="font-medium">{name}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-neutral-700">
+        below {num(lo, (n) => set([n, hi]), `${name}: lower edge`)} is {words[0]}; above{" "}
+        {num(hi, (n) => set([lo, n]), `${name}: upper edge`)} is {words[2]}; between is {words[1]}
+      </div>
+    </div>
+  );
   return (
-    <div className="mt-4 border-t border-neutral-100 pt-4">
+    <div className="mt-4 space-y-3 border-t border-neutral-100 pt-4">
       <p className="text-sm text-neutral-600">
-        The cut-points are the band edges on those two 0–10 scores — where one
-        band ends and the next begins. &ldquo;{tLo}, {tHi}&rdquo; reads: below {tLo} is
-        Far (or Low), {tLo}–{tHi} is Mid, above {tHi} is Near (or High). Raise the
-        second number and the top band shrinks — fewer technologies qualify as
-        imminent or big, so fewer reach P1. Lower the first and fewer sink to P6.
+        The band edges on the two 0–10 scores. Raise an upper edge and fewer technologies reach the top band, so fewer
+        reach P1; lower a lower edge and fewer sink to P6.
       </p>
-      <div className="mt-3 flex flex-wrap items-end gap-4">
-        <label className="text-sm">
-          How soon cut-points
-          <input className={`${field} block w-36`} value={timeline} onChange={(e) => setTimeline(e.target.value)} />
-        </label>
-        <label className="text-sm">
-          How big cut-points
-          <input className={`${field} block w-36`} value={potential} onChange={(e) => setPotential(e.target.value)} />
-        </label>
-        <button
-          onClick={() =>
-            onSave({
-              timeline_cutpoints: timeline.split(",").map((s) => Number(s.trim())),
-              potential_cutpoints: potential.split(",").map((s) => Number(s.trim())),
-            })
-          }
-          className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100"
-        >
-          Save cut-points
+      {axis("How soon", t, setT, ["Far", "Mid", "Near"])}
+      {axis("How big", p, setP, ["Low", "Mid", "High"])}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" disabled={bad} onClick={() => onSave({ timeline_cutpoints: t, potential_cutpoints: p })}
+          className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50">
+          Save the edges
         </button>
-        <span className="pb-2 text-xs text-neutral-500">Applies to new assessment runs. To apply it to a past run, use
-          &lsquo;Redo scores&rsquo; on that run&apos;s page.</span>
+        <span className="text-xs text-neutral-500">{bad ? "Each lower edge must be below its upper edge, within 0–10."
+          : "Applies to new assessment runs; a past run takes it with Redo scores on its page."}</span>
       </div>
     </div>
   );

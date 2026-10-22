@@ -6,7 +6,7 @@ import MoveDialog from "@/components/MoveDialog";
 import NascentFlag from "@/components/NascentFlag";
 import { type CitedPage, type Classification, type Status, VERDICT_STYLE, VERDICT_WORDS } from "@/lib/classification";
 import { undo } from "@/lib/decisions";
-import { formatDay } from "@/lib/format";
+import { formatDay, plural } from "@/lib/format";
 
 const provenance = (a: object) => {
   const p = a as Provenance;
@@ -63,7 +63,7 @@ export default function TechAnswers({ techId, c, cited, status, onChanged }: {
           </>} />
         <AnswerCard label="Evidence"
           value={c.evidence ? <span className={`rounded-full px-2 py-0.5 text-[14px] ${VERDICT_STYLE[c.evidence.verdict]}`}>{VERDICT_WORDS[c.evidence.verdict]}</span> : "Not judged yet"}
-          sub={c.evidence ? `${c.evidence.of} pages from ${c.evidence.sources} source${c.evidence.sources === 1 ? "" : "s"}` : "Classify judges it from the pages"}
+          sub={c.evidence ? `${plural(c.evidence.of, "page")} from ${plural(c.evidence.sources, "source")}` : "Classify judges it from the pages"}
           source={c.evidence ? "pages" : "none"} at={c.evidence?.at} reason={c.evidence?.reason} pages={c.evidence?.pages} cited={cited} />
       </div>
       {c.classified_at && (

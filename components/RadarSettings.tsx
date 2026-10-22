@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import SavedNote from "@/components/SavedNote";
+import { useHood } from "@/lib/hood";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 
 type Radar = {
@@ -20,8 +21,11 @@ export default function RadarSettings() {
   const [form, setForm] = useState<Radar | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { fetchJson<Radar>("/api/settings/radar").then(setForm).catch(() => {}); }, []);
+  const [kept, setKept] = useState<string>(""); // the saved values, to say when the form has edits not saved yet
+  useEffect(() => { fetchJson<Radar>("/api/settings/radar").then((r) => { setForm(r); setKept(JSON.stringify(r)); }).catch(() => {}); }, []);
+  const hood = useHood();
   if (!form) return null;
+  const dirty = JSON.stringify(form) !== kept;
   const num = (k: keyof Radar) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: Number(e.target.value) });
   // `unit`: a big number is repeated beside the box with thousands commas ("8,000,000 tokens")
   const row = (k: keyof Radar, label: string, note: string, unit?: string) => (
@@ -43,7 +47,9 @@ export default function RadarSettings() {
           setError(null);
           setSaved(false);
           try {
-            setForm(await sendJson<Radar>("/api/settings/radar", "PUT", form));
+            const r = await sendJson<Radar>("/api/settings/radar", "PUT", form);
+            setForm(r);
+            setKept(JSON.stringify(r));
             setSaved(true);
             configChanged();
           } catch (err) {
@@ -59,7 +65,7 @@ export default function RadarSettings() {
             model call each.
           </span>
         </label>
-        {row("classify_token_budget", "Most tokens one judging run may use", "A run stops at this limit and says so; the rest wait for the next run.", "tokens")}
+        {hood && row("classify_token_budget", "Most tokens one judging run may use", "A run stops at this limit and says so; the rest wait for the next run.", "tokens")}
         {row("classify_pages_cap", "Pages read per technology when judging", "Pages with findings first, then the newest. How many pages it has in all is still counted.")}
         {row("evidence_floor", "Pages needed before a technology counts as ready", "Until its evidence is judged, a technology is ready to assess once it has at least this many pages.")}
         {row("wake_after_pages", "Flag a switched-off technology after this many new pages", "It shows on the Briefing, under Before scoring, once this many new pages about it arrive.")}
@@ -68,12 +74,13 @@ export default function RadarSettings() {
         <label className="block text-sm font-medium">
           Default time zone
           <input className={field} value={form.default_time_zone} onChange={(e) => setForm({ ...form, default_time_zone: e.target.value })} />
-          <span className="mt-1 block text-xs font-normal text-neutral-500">Counts the Find evidence day, and stands in for a write that didn&apos;t record its zone. Times on screen show in your browser&apos;s own zone.</span>
+          <span className="mt-1 block text-xs font-normal text-neutral-500">Counts the Find evidence day, and stands in for a write that didn&apos;t record its zone. Each time on screen shows in the zone of the person who did the thing.</span>
         </label>
         <div className="lg:col-span-2">
           {error && <p className="text-sm text-failed">Not saved: {error}</p>}
           <SavedNote show={saved} />
           <button type="submit" className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong">Save judging, evidence and time zone settings</button>
+          {dirty && <span className="ml-3 text-sm text-amber-800">Edits here aren&apos;t saved yet</span>}
         </div>
       </form>
     </section>

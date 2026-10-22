@@ -8,7 +8,7 @@ import FinanceCard from "@/components/FinanceCard";
 import PathToScale from "@/components/PathToScale";
 import UseCases from "@/components/UseCases";
 import { errorText, fetchJson } from "@/lib/api";
-import { type Finance, hasFigures, type Pages, type PathStep, type UseCase, useValueLists } from "@/lib/value";
+import { type Finance, FINANCE_SHOWN, hasFigures, type Pages, type PathStep, type UseCase, useValueLists } from "@/lib/value";
 
 export type Fab = { fabric: string; finance: Finance; path: PathStep[]; cited_pages: Pages;
   use_case_decisions: Record<string, { _id: string; value: string }>;
@@ -64,7 +64,7 @@ export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
                 <PathToScale readOnly steps={f.path} current={f.finance.step} next={f.finance.next_step} techId={techId} fabricId={fid} />
               </div>
             </div>
-            <div className="mt-3">
+            {FINANCE_SHOWN && <div className="mt-3">
               <div className={`mb-1 ${LABEL}`}>Finance</div>
               {hasFigures(f.finance) ? <FinanceCard readOnly f={f.finance} techId={techId} fabricId={fid} /> : (
                 <p className="rounded-lg bg-neutral-100 px-3 py-2 text-[13px] text-neutral-500 print:bg-transparent">
@@ -76,7 +76,7 @@ export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
                   )}
                 </p>
               )}
-            </div>
+            </div>}
           </div>
         );
       })}

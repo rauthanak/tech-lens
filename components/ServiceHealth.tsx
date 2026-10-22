@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchJson } from "@/lib/api";
+import { useHood } from "@/lib/hood";
 
 function StatusCard({ name, ok, note }: { name: string; ok: boolean | null; note: string }) {
   const dot = ok === null ? "bg-neutral-300" : ok ? "bg-azure" : "bg-failed-dot";
@@ -20,19 +21,25 @@ function StatusCard({ name, ok, note }: { name: string; ok: boolean | null; note
   );
 }
 
-/** Is the Tech Atlas API answering, and can it reach MongoDB? */
+/** Is the Tech Atlas API answering, and can it reach MongoDB? Shown with the
+ *  Technical details switch on, or whenever either is down. */
 export default function ServiceHealth() {
+  const hood = useHood();
   const [health, setHealth] = useState<{ mongo: boolean } | null>(null);
   const [down, setDown] = useState(false);
   useEffect(() => {
     fetchJson<{ mongo: boolean }>("/api/health").then(setHealth).catch(() => setDown(true));
   }, []);
+  if (!hood && !down && health?.mongo !== false) return null;
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <section className="mt-10">
+      <h2 className="text-lg font-semibold">Service health</h2>
+    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
       <StatusCard name="Tech Atlas API" ok={down ? false : health ? true : null}
         note={down ? "nothing answered on port 8100" : "port 8100"} />
       <StatusCard name="MongoDB" ok={down ? null : health ? health.mongo : null}
         note={down ? "unknown while the API is down" : "via /api/health"} />
     </div>
+    </section>
   );
 }

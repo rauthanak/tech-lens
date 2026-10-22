@@ -64,6 +64,9 @@ with sync_playwright() as p:
               "Technology: 'x of y measures had enough evidence to score'")
         check("Up to date" not in body, "Technology: no 'Up to date'")
         check(active_menu(pg) == "Technologies" if width != 400 else True, "Technology: the top bar keeps Technologies lit")
+        pg.goto(BASE + "/admin/technologies/agentic-ai?tab=fabrics&from=%2Fadmin%2Ftechnologies")  # the Fabrics tab (change 18)
+        settle(pg, 2500)
+        body = pg.inner_text("body")
         check(pg.locator("nav[aria-label=Fabrics] button").count() >= 2, "Technology: a tab per fabric, on its own page")
         # the portal's own words; the model's justifications (leading-relaxed paragraphs) are skill output
         chrome = pg.evaluate("""() => { const c = document.body.cloneNode(true);

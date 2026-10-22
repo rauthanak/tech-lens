@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { targetValues, type Target } from "@/components/AddTechnology";
 import ConfirmAction from "@/components/ConfirmAction";
+import BackLink from "@/components/BackLink";
 import PageHeader from "@/components/PageHeader";
 import { calls } from "@/lib/actions";
 import { ApiError, errorText, fetchJson, sendForm, sendJson } from "@/lib/api";
@@ -821,6 +822,7 @@ function ImportTechnologies() {
 
   return (
     <div>
+      <BackLink fallback="/admin/technologies" fallbackLabel="Technologies" />
       <PageHeader title="Import technologies"
         intro="Bring in the catalog, Tata's own list of emerging technologies: matched against the technologies the radar already knows, reviewed by you, then confirmed. A new file saves nothing until you confirm it."
         help={<>

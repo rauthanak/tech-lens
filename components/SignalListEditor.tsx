@@ -99,9 +99,9 @@ export default function SignalListEditor() {
     }
   }
 
-  async function remove(row: SignalRow) {
-    await sendJson(`/api/signals/${row._id}`, "DELETE"); // ConfirmAction shows why if this fails
-    if (draft?.id === row._id) setDraft(null);
+  async function remove(id: string) {
+    await sendJson(`/api/signals/${id}`, "DELETE"); // ConfirmAction shows why if this fails
+    if (draft?.id === id) setDraft(null);
     changed();
   }
 
@@ -154,10 +154,6 @@ export default function SignalListEditor() {
                       onClick={() => open({ id: r._id, name: r.name, look_for: r.look_for, mode: r.mode, enabled: r.enabled })}>
                       Edit
                     </button>
-                    <ConfirmAction label="Delete" confirmLabel="Delete" secondary onConfirm={() => remove(r)}
-                      question={r.enabled
-                        ? `Delete “${r.name}”? It leaves the list from the next collection. Findings it already found stay on their pages. Changing the list marks stored pages as not yet checked.`
-                        : `Delete “${r.name}”? It's switched off, so nothing else changes.`} />
                   </div>
                 ))}
               </div>
@@ -170,14 +166,17 @@ export default function SignalListEditor() {
         </div>
         {draft && (
           <SignalForm key={draft.id ?? "new"} draft={draft} onClose={close}
-            onSaved={() => { close(); changed(); }} />
+            onSaved={() => { close(); changed(); }}
+            onDelete={draft.id ? () => remove(draft.id!) : undefined} />
         )}
       </div>
     </div>
   );
 }
 
-function SignalForm({ draft, onClose, onSaved }: { draft: Draft; onClose: () => void; onSaved: () => void }) {
+/** One signal's form; Delete sits here, behind Edit and a confirm, rather than on every row. */
+function SignalForm({ draft, onClose, onSaved, onDelete }: { draft: Draft; onClose: () => void; onSaved: () => void;
+  onDelete?: () => Promise<void> }) {
   const [form, setForm] = useState<Draft>(draft);
   const [error, setError] = useState<{ field: "name" | "general"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -234,6 +233,14 @@ function SignalForm({ draft, onClose, onSaved }: { draft: Draft; onClose: () => 
       <div className="flex flex-wrap items-center gap-2">
         <button type="submit" className={darkBtn} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         <button type="button" className={lightBtn} onClick={onClose}>Cancel</button>
+        {onDelete && (
+          <span className="ml-auto">
+            <ConfirmAction label="Delete" confirmLabel="Delete" secondary onConfirm={onDelete}
+              question={draft.enabled
+                ? `Delete “${draft.name}”? It leaves the list from the next collection. Findings it already found stay on their pages. Changing the list marks stored pages as not yet checked. Switching it off pauses it instead.`
+                : `Delete “${draft.name}”? It's switched off, so nothing else changes.`} />
+          </span>
+        )}
       </div>
     </form>
   );

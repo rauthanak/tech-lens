@@ -33,8 +33,8 @@ export default function DomainsPage() {
           <li>Nine domains from the catalog, Tata&apos;s own list of emerging technologies (the three blockchain spellings merged), plus Other when none fits.
             Sub-domains come from Tata&apos;s file, grouped under their domain.</li>
           <li>When no sub-domain fits, the model proposes a new one, marked &ldquo;new&rdquo;. Accept it, merge it into an
-            existing one (its technologies move there at no cost), or rename it. New ones show on Changes until
-            they&apos;re in the starting files.</li>
+            existing one (its technologies move there at no cost), or rename it. The Briefing&apos;s To do counts the ones
+            waiting. Each one accepted shows on Changes until it&apos;s kept as a default.</li>
           <li>A person can move any technology to another domain or sub-domain on its page; that choice wins.</li>
         </>} />
       <h2 className="mt-6 text-base font-semibold">Domains</h2>

@@ -12,7 +12,7 @@ import { formatDate, formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
 import { type Axis, AXIS_MEANING, formatScore, HORIZON_TERM, LEGEND, PRIORITY_LEGEND, weightShare } from "@/lib/scoring";
 import { scoreShade } from "@/lib/theme";
-import { type Finance, figureText } from "@/lib/value";
+import { type Finance, FINANCE_SHOWN, figureText } from "@/lib/value";
 
 // A Point of View as the analysts' page and the leaders' Frontier both show
 // it, the same apart from the admins' controls (PovBody): the verdict, the four
@@ -295,7 +295,7 @@ function Answers({ pov }: { pov: Pov }) {
       <Card title="Evidence" value={ev ? VERDICT_WORDS[ev.verdict] : "Not judged yet"}>
         {ev ? (
           <>
-            {ev.reason && <p>{ev.reason} {renderRefs(ev.refs, src)}</p>}
+            {ev.reason && <p><span className="text-muted">At its latest look: </span>{ev.reason} {renderRefs(ev.refs, src)}</p>}
             {ev.of > 0 && <p className="text-muted">Evidence judged on {plural(ev.of, "page")} from {plural(ev.sources, "source")}</p>}
           </>
         ) : <p>The radar hasn&apos;t rated how solid its pages are yet.</p>}
@@ -416,7 +416,7 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
               ))}
               <dl className="mt-3 space-y-1.5 border-t border-neutral-100 pt-2 text-[13px] leading-snug">
                 <div><dt className="text-muted">How far Tata has got</dt><dd>{howFar(f)}</dd></div>
-                <div><dt className="text-muted">Does it pay?</dt><dd>{pays(f)}</dd></div>
+                {FINANCE_SHOWN && <div><dt className="text-muted">Does it pay?</dt><dd>{pays(f)}</dd></div>}
               </dl>
             </div>
           );
@@ -424,14 +424,16 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
       </div>
       <div className="mt-2 hidden overflow-x-auto rounded-card border border-line bg-white md:block print:block">
         <table className="w-full min-w-[760px] table-fixed text-sm">
-          <colgroup><col className="w-[13%]" /><col className="w-[33%]" /><col className="w-[22%]" /><col className="w-[16%]" /><col className="w-[16%]" /></colgroup>
+          {FINANCE_SHOWN
+            ? <colgroup><col className="w-[13%]" /><col className="w-[33%]" /><col className="w-[22%]" /><col className="w-[16%]" /><col className="w-[16%]" /></colgroup>
+            : <colgroup><col className="w-[14%]" /><col className="w-[40%]" /><col className="w-[24%]" /><col className="w-[22%]" /></colgroup>}
           <thead>
             <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
               <th className="px-3 py-2 font-normal">Fabric</th>
               <th className="px-3 py-2 font-normal">Use case</th>
               <th className="px-3 py-2 font-normal">Investment needed</th>
               <th className="px-3 py-2 font-normal">How far Tata has got</th>
-              <th className="px-3 py-2 font-normal">Does it pay?</th>
+              {FINANCE_SHOWN && <th className="px-3 py-2 font-normal">Does it pay?</th>}
             </tr>
           </thead>
           {fabrics.map((f) => {
@@ -444,7 +446,7 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
                     <td className={`${cell} leading-snug`}>{caseCell(r, i, rows.length)}</td>
                     <td className={`${cell} leading-snug`}>{investment(r)}</td>
                     {i === 0 && <td rowSpan={rows.length} className={`${cell} leading-snug`}>{howFar(f)}</td>}
-                    {i === 0 && <td rowSpan={rows.length} className={`${cell} leading-snug`}>{pays(f)}</td>}
+                    {FINANCE_SHOWN && i === 0 && <td rowSpan={rows.length} className={`${cell} leading-snug`}>{pays(f)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -456,9 +458,9 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
         <li><b className="font-medium">How far Tata has got:</b> the step Tata has reached on its path to scale
           ({steps ? `${steps} steps, ` : ""}from first evaluating it to investing in it). Tata&apos;s team records it on the
           technology&apos;s page; the radar never sets it.</li>
-        <li><b className="font-medium">Does it pay?</b> Contribution, payback and break-even, worked out from Tata&apos;s
+        {FINANCE_SHOWN && <li><b className="font-medium">Does it pay?</b> Contribution, payback and break-even, worked out from Tata&apos;s
           own figures (margin, revenue, costs) entered under Finance on the technology&apos;s page. They&apos;re asked for
-          from {from.name}{from.order ? ` (step ${from.order})` : ""}; before that, nothing is missing.</li>
+          from {from.name}{from.order ? ` (step ${from.order})` : ""}; before that, nothing is missing.</li>}
         <li>Numbers in brackets are sources; +n shows the rest.</li>
       </ul>
     </section>
@@ -585,9 +587,7 @@ function Scores({ pov, changeHref }: { pov: Pov; changeHref?: (fabricId: string)
           const names = meta.filter((m) => m.axis === k).sort((x, y) => x.code.localeCompare(y.code)).map((m) => m.name);
           return <li key={k}><b className="font-medium">{AXIS_LABELS[k]}</b>: {AXIS_MEANING[k]}{names.length > 0 && `, from ${names.join(", ")}`}.</li>;
         })}
-        <li>Each out of 10, darker when higher; &ldquo;2 of 3&rdquo; means two of its three measures had enough evidence
-          (with none there&apos;s no score, which isn&apos;t a zero). Why opens the measures behind a fabric&apos;s scores, on the right.
-          {" "}{LEGEND}</li>
+        <li>Each out of 10, darker when higher; &ldquo;2 of 3&rdquo;: measures with enough evidence. Why opens them.</li>
       </ul>
     </section>
   );
@@ -673,17 +673,24 @@ export function PovHelp({ admin = false }: { admin?: boolean }) {
         horizon, near to far), the maturity (TRL, 1 to 9), the commercial availability and how solid the evidence is.
         A priority a person set says so, with their reason and the priority the scores give.</li>
       <li>Then the recommendation, and the use cases in a table: per fabric, each use case with the investment it
-        needs and why, how far Tata has got on its path to scale, and whether it pays, from Tata&apos;s own figures. The
-        note under the table says what those mean and where they&apos;re entered.</li>
+        needs and why, and how far Tata has got on its path to scale{FINANCE_SHOWN ? <>, and whether it pays, from
+        Tata&apos;s own figures</> : ""}. The note under the table says what {FINANCE_SHOWN ? "those mean" : "that means"} and
+        where it&apos;s recorded.</li>
       <li>The rest is folded, each fold saying what it holds: the summary, how each use case makes money, what&apos;s
         missing, the score detail in words, and the sources.</li>
       <li>A number in brackets, like [3], is a source: click it to open the page. It&apos;s the same number everywhere
         on the page, and Sources lists them all.</li>
       <li>Scores: per fabric, Market Potential, Strategic Fit and Adoption Readiness, each out of 10 (darker is
-        higher), with how many of its measures had enough evidence (2 of 3). Why, on a fabric&apos;s row, opens a panel
+        higher), with how many of its measures had enough evidence (2 of 3; with none there&apos;s no score, which isn&apos;t
+        a zero). {LEGEND} Why, on a fabric&apos;s row, opens a panel
         on the right with the measures behind its scores: each measure&apos;s score, the reasoning and its pages. Close it
         (×, or Esc) and the page is as it was.{admin && " In the panel, a link changes a score or the priority on the technology's page."}</li>
-      <li>Written is when this Point of View was written, in the writer&apos;s time zone.{admin && " Assessed is when the assessment it explains was made. Rewriting writes it again from the same assessment: the scores don't change."}</li>
+      <li>Written is when this Point of View was written, in the writer&apos;s time zone.{admin && " Assessed is when the assessment it explains was made. Rewriting writes it again from the same assessment: the scores don't change. When pages arrived after it, a line under the title says so: assess the technology again to take them in."}</li>
+      {admin && <li>Below the title, which version leaders see: this one, or an earlier one in the latest published edition.
+        Leaders never see a Point of View until it&apos;s published; Briefing › To do › Publish to leaders sends every one
+        as it stands.</li>}
+      <li>Evidence: how solid the pages are, judged on all of them; &ldquo;at its latest look&rdquo; gives the reason from the
+        radar&apos;s most recent judgment, which may have read only the newest pages.</li>
       <li>Print / Save as PDF prints it with every fold open, except the score detail, which prints only when you open
         it first.</li>
     </>
@@ -791,7 +798,7 @@ export function PovBody({ pov, admin = false }: { pov: Pov; admin?: boolean }) {
             </Fold>
           )}
           <Fold title="Score detail, in words: what each score rests on" className="score-detail print:break-before-page"
-            hint="the measures themselves open under Why in Scores · prints only when open">
+            hint="the measures themselves open under Why in Scores">
             {Object.entries(AXIS_LABELS).map(([axis, name]) => {
               const covers = named((m) => m.axis === axis);
               return <Section key={axis} title={name} covers={covers && `Measures: ${covers}`} text={s.tora_analysis?.[axis]} sources={src} />;

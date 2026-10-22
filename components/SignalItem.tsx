@@ -16,7 +16,7 @@ const SHOWN_TECHS = 3; // the panel lists them all
  *  it isn't the collection's, and always for an older article), or when it
  *  was collected if the page gives no date. */
 export function dateLine(item: FoundHit): string {
-  if (!item.published_date) return `Collected ${formatDay(item.scraped_at)}`;
+  if (!item.published_date) return `No publication date · collected ${formatDay(item.scraped_at)}`;
   const year = item.older || item.published_date.slice(0, 4) !== item.scraped_at.slice(0, 4);
   return `Published ${formatDate(item.published_date, year)}`;
 }

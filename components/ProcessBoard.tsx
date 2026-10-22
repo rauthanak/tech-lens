@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import CollectButton from "@/components/CollectButton";
 import ConfirmAction from "@/components/ConfirmAction";
+import { PublishLink } from "@/components/LeadersSee";
 import { calls, organizeTechnologies, resumeAssessment, startAssessment, startCheck, startClassify, writePovs } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
 import { formatAt, plural } from "@/lib/format";
@@ -17,6 +18,7 @@ type Column = {
   detail: React.ReactNode; // what the step does, in plain words
   live?: boolean;
   needsYou?: boolean;
+  who: "You start it" | "Runs by itself" | "Waits for you"; // who moves this step on
   action?: React.ReactNode;
   href: string;
   link: string;
@@ -42,8 +44,9 @@ function useClassifyFailures(runId?: string, failed = 0): string | null {
   return why && why.runId === runId ? why.text : null;
 }
 
-/** Collect → Signals → Organize → Classify → Assess → Points of View: each
- *  step's state, when it last ran and what it did, what it does, and its one
+/** Collect → Signals → Organize → Classify → Assess → Points of View, numbered
+ *  in order, each saying who moves it on (you start it, it runs by itself, or
+ *  it waits for you): each step's state, when it last ran and what it did, what it does, and its one
  *  action; while a step runs, its progress replaces the action. A collection
  *  does the next three itself, so only assessing and writing ever wait for
  *  you (`needsYou`), and classifying when a run left some; re-checking older
@@ -52,6 +55,11 @@ export default function ProcessBoard() {
   const p = usePipeline();
   const c = p?.classify;
   const whyFailed = useClassifyFailures(c?.run_id, c?.failed);
+  const [since, setSince] = useState<{ povs_written: number } | null>(null); // since the edition leaders see
+  const composed = p?.pov.composed;
+  useEffect(() => {
+    fetchJson<{ since: { povs_written: number } | null }>("/api/editions/since").then((d) => setSince(d.since)).catch(() => {});
+  }, [composed]);
   if (!p) return null;
   const { collect, signals, technologies, assess, pov } = p;
   const check = signals.recheck?.status === "running" ? signals.recheck : null;
@@ -80,7 +88,7 @@ export default function ProcessBoard() {
         : <>Last collected {formatAt(collect.finished_at)} · {plural(collect.new_documents ?? 0, "new page")}
           {(collect.incomplete ?? 0) > 0 && <> · {plural(collect.incomplete ?? 0, "website")} reached the page limit</>}</>,
       detail: "Visits the websites and data sources the radar watches and keeps the pages that are new or changed. Then, by itself, it picks out the findings on them and organizes and classifies technologies.",
-      live: isLive(collect.status),
+      live: isLive(collect.status), who: "You start it",
       action: <CollectButton />,
       href: "/admin/runs", link: "Collections",
     },
@@ -93,7 +101,7 @@ export default function ProcessBoard() {
         {signals.other > 0 && ` (${signals.other} not on your signal list)`} · {plural(signals.set_aside, "page")} set aside by
         a Can ignore rule</>,
       detail: "Reads each new page for the events on your signal list, such as a funding round or a launch, and keeps each one as a finding. Runs by itself on every new page; older pages are checked again only when you ask.",
-      live: !!check,
+      live: !!check, who: "Runs by itself",
       action: signals.stale_pages > 0 && (
         <ConfirmAction label="Check again" cost={calls(signals.stale_pages)} secondary
           question={`Check the ${plural(signals.stale_pages, "older page")} against the current signal list? About ${plural(signals.stale_pages, "model call")}. Optional: new pages are checked as they're collected.`}
@@ -108,7 +116,7 @@ export default function ProcessBoard() {
           {newNames != null && ` · ${newNames ? `${plural(newNames, "new name")} looked at` : "no new names"}`}</>
         : "Not organized yet",
       detail: "Merges names that mean the same technology (say “GenAI” and “Generative AI”) and adds new ones. Runs by itself after each collection.",
-      live: organizing,
+      live: organizing, who: "Runs by itself",
       action: (
         <ConfirmAction label="Organize now" cost="a few model calls" secondary
           question="Organize technologies now? It merges names that mean the same technology and adds new ones, with a few model calls for names it hasn't seen before."
@@ -124,7 +132,7 @@ export default function ProcessBoard() {
         : c?.finished_at ? "Up to date" : "Nothing classified yet",
       last: classified,
       detail: "Files each technology under a domain, says whether it's on sale yet and how mature it is (TRL), and how solid its evidence is. Runs by itself after each collection.",
-      live: classifying,
+      live: classifying, who: "Runs by itself",
       needsYou: !classifying && (c?.pending ?? 0) > 0,
       action: (c?.pending ?? 0) > 0 && (
         <ConfirmAction label={`Classify ${c!.pending}`} cost={calls(c!.pending)} secondary
@@ -143,14 +151,14 @@ export default function ProcessBoard() {
       last: assess.status === "completed" && assess.finished_at &&
         `Last assessed ${formatAt(assess.finished_at)} · ${plural(assess.techs_done ?? 0, "technology", "technologies")}`,
       detail: "Scores each technology in every fabric it touches, from its pages, which sets its priority, and writes its use cases. It costs model calls, so it waits for you.",
-      live: isLive(assess.status),
+      live: isLive(assess.status), who: "Waits for you",
       needsYou: !isLive(assess.status) && (!!resume || !!toAssess),
       action: resume ? (
         <ConfirmAction label="Resume" cost={calls(resume.calls)}
           question={`Resume the assessment run? About ${plural(resume.calls, "model call")} for the ${plural(resume.count, "technology", "technologies")} left.`}
           disabled={blockedReason(p, "assess")} onConfirm={() => resumeAssessment(resume.scoring_run_id)} />
       ) : toAssess && (
-        <ConfirmAction label="Assess" cost={calls(toAssess.calls)}
+        <ConfirmAction label="Assess them again" cost={calls(toAssess.calls)}
           question={`Assess ${plural(toAssess.count, "technology", "technologies")} with new pages? About ${plural(toAssess.calls, "model call")} (up to ${toAssess.calls_max}).`}
           disabled={blockedReason(p, "assess")} onConfirm={() => startAssessment(toAssess.tech_ids)} />
       ),
@@ -161,7 +169,9 @@ export default function ProcessBoard() {
       state: writing ? `Writing ${writing.done} of ${writing.total}`
         : pov.pending > 0 ? `${pov.pending} to write · ${pov.composed} written` : `${pov.composed} written`,
       detail: "The radar's conclusion on each technology, for leaders, written from its latest assessment. One model call each, so it waits for you.",
-      live: !!writing,
+      last: since?.povs_written ? <>{plural(since.povs_written, "Point of View", "Points of View")} written since the
+        edition leaders see. <PublishLink>Publish on the Briefing →</PublishLink></> : undefined,
+      live: !!writing, who: "Waits for you",
       needsYou: !writing && pov.pending > 0,
       action: pov.pending > 0 && (
         <ConfirmAction label="Write" cost={calls(pov.pending)}
@@ -174,11 +184,13 @@ export default function ProcessBoard() {
 
   return (
     <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-      {columns.map((col) => (
+      {columns.map((col, i) => (
         <li key={col.title} className={`flex flex-col rounded-card border bg-white px-4 py-3 ${
           col.needsYou ? "border-azure ring-1 ring-azure" : "border-line"}`}>
-          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-neutral-500">
-            {col.title}
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-neutral-500">{i + 1} · {col.title}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] ${col.who === "Waits for you" ? "bg-amber-50 text-amber-900"
+              : col.who === "You start it" ? "bg-navy/[0.06] text-ink" : "bg-ground text-muted"}`}>{col.who}</span>
           </div>
           <div className="mt-1.5 text-sm font-medium text-ink">
             {col.live ? <Progress>{col.state}</Progress> : col.state}

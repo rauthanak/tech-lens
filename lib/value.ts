@@ -52,6 +52,29 @@ export const figureText = (value: number, unit?: string) =>
 /** "fabric default", or "set for this technology on Oct 21". */
 export const sourceText = (s: Source) => (s.at ? `${s.source} on ${formatDay(s.at)}` : s.source);
 
+/** Finance (contribution, payback, break-even) is set aside until Tata has
+ *  discussed it (21 Oct 2026): no screen asks for it or shows it. Its figures
+ *  and code are kept; the API's finance.SHOWN is its pair. A rung's evidence
+ *  (a named buyer, a price, a measured cost per outcome) is still entered,
+ *  on the path to scale. */
+export const FINANCE_SHOWN = false;
+
+export const AMOUNTS = ["revenue", "volume", "price", "displaced", "upfront", "running"] as const;
+export const SHARES = ["margin", "loss_without", "loss_with"] as const;
+export const NOTES = ["buyer", "budget", "exposed_contracts", "cost_per_outcome"] as const;
+
+/** The finance choice as it's stored now (only what was set for this
+ *  technology, not defaults), so a new choice changes one input and keeps the rest. */
+export function storedFinance(f: Finance): Record<string, string | number> {
+  const own = (x: { at?: string } | null) => Boolean(x?.at);
+  const out: Record<string, string | number> = {};
+  for (const k of AMOUNTS) if (f[k] && own(f[k]) && !f[k]!.source.startsWith("volume")) out[k] = f[k]!.value;
+  for (const k of SHARES) if (f[k] && own(f[k])) out[k] = f[k]!.value;
+  for (const k of NOTES) if (f.notes[k]) out[k] = f.notes[k]!.value;
+  if (own(f.mechanism)) out.mechanism = f.mechanism.value;
+  return out;
+}
+
 /** Whether any of the three figures is worked out yet. */
 export const hasFigures = (f: Finance) => [f.contribution, f.payback, f.break_even].some((x) => x?.value != null);
 

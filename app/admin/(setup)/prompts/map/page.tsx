@@ -100,7 +100,7 @@ export default function SkillMapPage() {
                     <span className={`h-2 w-2 shrink-0 rounded-full ${sk.enabled ? "bg-azure" : "bg-neutral-300"}`}
                       title={sk.enabled ? "switched on" : "switched off"} />
                     <span className="min-w-0 flex-1 text-[13px] font-medium print:text-[11px]">{sk.title}</span>
-                    {sk.agent && <span className="rounded bg-navy/10 px-1.5 text-[10.5px] text-navy" title="Plans its own calls">agent</span>}
+                    {sk.agent && <Hood><span className="rounded bg-navy/10 px-1.5 text-[10.5px] text-navy" title="Plans its own calls">agent</span></Hood>}
                   </div>
                   {!sk.enabled && <div className="mt-0.5 text-[11.5px]">Switched off</div>}
                   <div className="mt-0.5 text-[11.5px] text-muted print:text-[10px]">

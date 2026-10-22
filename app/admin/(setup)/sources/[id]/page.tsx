@@ -124,8 +124,8 @@ export default function SourceEditorPage() {
           <li>Data sources: each saved search runs at every collection. Progress shows how far it has collected and
             what&apos;s still to collect when the page budget ran out; &ldquo;too broad&rdquo; means narrow the
             search.</li>
-          <li>Horizon, cost and kind of source organise the list on Sources. Enabled decides whether the next
-            collection reads it.</li>
+          <li>Horizon, cost and kind of source organise the list on Sources. Switched on, at the top, decides
+            whether the next collection reads it; Save keeps it.</li>
         </>}>
         <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
           {form && (never ? "Not collected"
@@ -146,6 +146,13 @@ export default function SourceEditorPage() {
       {form && (
         <form className="mt-7 space-y-5" onSubmit={(e) => { e.preventDefault(); save(); }}>
           {/* two columns on wide screens: the register entry, then how it's read */}
+          {!never && (
+            <label className={`flex w-fit items-center gap-2 rounded-card border px-4 py-2.5 text-sm ${form.enabled
+              ? "border-line bg-white" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+              <input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+              {form.enabled ? "Switched on: the next collection reads this source" : "Switched off: collections skip this source"}
+            </label>
+          )}
           <fieldset disabled={never} className="grid grid-cols-1 items-start gap-x-10 gap-y-5 lg:grid-cols-2">
             <div className="space-y-5">
               <div>
@@ -192,10 +199,6 @@ export default function SourceEditorPage() {
                 </select>
               </div>
 
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-                Enabled — the radar reads this source
-              </label>
             </div>
 
             {access === "crawl" && (

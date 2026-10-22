@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import DecisionNote from "@/components/DecisionNote";
 import PageRefs from "@/components/PageRefs";
@@ -12,7 +13,7 @@ import type { Finance, Pages, SuggestedBlocker } from "@/lib/value";
  *  write another. A blocker the model read on a page says so under it, with
  *  why, the words and the page; it is only picked when a person ticks it.
  *  Read-only on the Point of View: the picked ones. */
-export default function Bottlenecks({ picked, options, suggested = [], pages, techId, fabricId, onChanged, readOnly }: {
+export default function Bottlenecks({ picked, options, suggested = [], pages, techId, fabricId, onChanged, onCancel, readOnly }: {
   picked: Finance["bottlenecks"];
   options?: string[]; // the fabric's list; undefined while it loads
   suggested?: SuggestedBlocker[];
@@ -20,6 +21,7 @@ export default function Bottlenecks({ picked, options, suggested = [], pages, te
   techId: string;
   fabricId: string;
   onChanged?: () => void;
+  onCancel?: () => void; // a Cancel beside Save, when the checklist was opened on request
   readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -43,7 +45,8 @@ export default function Bottlenecks({ picked, options, suggested = [], pages, te
     </div>
   );
   if (!options) return null;
-  if (!options.length) return <p className="text-[13px] text-muted">This fabric has no blockers listed yet: add them in Setup › Fabrics.</p>;
+  if (!options.length) return <p className="text-[13px] text-muted">This fabric has no blockers listed yet: add them in{" "}
+    <Link href="/admin/scoring/fabrics" className="text-link hover:underline">Setup › Fabrics</Link>.</p>;
   return (
     <form className="space-y-1.5 text-[13px]" onSubmit={async (e) => {
       e.preventDefault();
@@ -80,7 +83,8 @@ export default function Bottlenecks({ picked, options, suggested = [], pages, te
       <div className="flex items-center gap-2">
         <button type="submit" disabled={!ticked.length && !other.trim()}
           className="rounded-full bg-navy px-3.5 py-1 text-sm text-white hover:bg-navy-strong disabled:opacity-50">Save</button>
-        {editing && <button type="button" className="text-muted hover:text-ink" onClick={() => setEditing(false)}>Cancel</button>}
+        {(editing || onCancel) && <button type="button" className="text-muted hover:text-ink"
+          onClick={() => editing ? setEditing(false) : onCancel?.()}>Cancel</button>}
         {!ticked.length && !other.trim() && <span className="text-[12.5px] text-muted">Tick one or more, or write your own, to save.</span>}
       </div>
       {error && <p className="text-[12.5px] text-failed">Not saved: {error}</p>}

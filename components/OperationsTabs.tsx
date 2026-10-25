@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Operations' three pages, as tabs in the same style as Setup's scoring tabs.
+// Operations' four pages, as tabs in the same style as Setup's scoring tabs.
 const TABS = [
   { href: "/admin/operations", label: "Overview" },
   { href: "/admin/runs", label: "Collections" },
   { href: "/admin/scoring/assessments", label: "Assessment runs" },
+  { href: "/admin/operations/history", label: "History" },
 ];
 
 export default function OperationsTabs() {

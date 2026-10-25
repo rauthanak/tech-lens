@@ -4,6 +4,9 @@ import type { NextConfig } from "next";
 const API_URL = process.env.TECH_ATLAS_API_URL ?? "http://127.0.0.1:8100";
 
 const nextConfig: NextConfig = {
+  // a request the page waits on (writing a Point of View: a minute or more) is
+  // forwarded until the backend answers, not cut off at Next's 30 seconds
+  experimental: { proxyTimeout: 10 * 60_000 },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API_URL}/api/:path*` }];
   },

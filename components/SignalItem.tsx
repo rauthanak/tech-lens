@@ -54,7 +54,7 @@ export default function SignalItem({ item, withTechnologies = true }: { item: Fo
         </span>
       </button>
       {item.implication && (
-        <p className="mt-0.5 line-clamp-1 text-[13.5px] text-muted">Why it matters: {item.implication}</p>
+        <p className="mt-0.5 line-clamp-3 text-[13.5px] text-muted">Why it matters: {item.implication}</p>
       )}
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
         <span>{hostOf(item.url)}</span>

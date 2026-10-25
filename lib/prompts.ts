@@ -99,6 +99,26 @@ export const PROMPT_IMPACT: Record<string, PromptImpact> = {
       "How each technology's name is shown: its usual capitals (\"ml-kem\" → \"ML-KEM\"). The stored name stays lowercase.",
     live: true,
   },
+  technology_names: {
+    title: "Names to look for",
+    stage: "Organize",
+    usedBy: "Linking known names, after each collection or the catch-up on Operations",
+    code: "Tagger (src/agent/tagger)",
+    when: "Once per batch of 40 catalog technologies that have no names yet; a person can edit them on the technology's page",
+    impacts:
+      "The names each catalog technology is found by on pages (spellings, short forms); and the note on an entry that reads as an industry application or use case.",
+    live: true,
+  },
+  name_check: {
+    title: "Check a name on a page",
+    stage: "Organize",
+    usedBy: "Linking known names, after each collection or the catch-up on Operations",
+    code: "Tagger (src/agent/tagger)",
+    when: "Once per 10 pages that name a catalog technology and haven't been checked for it",
+    impacts:
+      "Which pages are filed under a catalog technology as its evidence (about it), and which only name it in passing (counted apart, never evidence).",
+    live: true,
+  },
   analyzer: {
     title: "Plan an assessment run",
     stage: "Assess",
@@ -173,7 +193,7 @@ export const PROMPT_IMPACT: Record<string, PromptImpact> = {
     stage: "Classify",
     usedBy: "The Classify call",
     when: "Once per technology judged",
-    impacts: "Flags for the Before scoring list; a person confirms or dismisses each.",
+    impacts: "Flags for the Before assessing list; a person confirms or dismisses each.",
     live: true,
   },
   value_levers: {

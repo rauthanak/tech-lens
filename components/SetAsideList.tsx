@@ -6,8 +6,9 @@ import BackendError from "@/components/BackendError";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import type { SetAsidePage } from "@/lib/signals";
+import Pager from "@/components/Pager";
+import { useStoredStart } from "@/lib/paging";
 
-const lightBtn = "rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-ground";
 const DAYS = 30;
 
 /** Setup → Signal list: pages a Can ignore rule set aside in the last 30
@@ -23,13 +24,14 @@ export default function SetAsideList() {
     return fetchJson<{ pages: SetAsidePage[]; total: number }>(`/api/signals/set-aside?since=${since}&limit=20&skip=${skip}`);
   };
 
+  const [start, setStart] = useStoredStart("set-aside"); // 20 at a time, kept when you come back
   useEffect(() => {
     let current = true;
-    fetchPages(0)
+    fetchPages(start)
       .then((d) => { if (current) { setPages(d.pages); setTotal(d.total); } })
       .catch((e) => { if (current) setError(e); });
     return () => { current = false; };
-  }, []);
+  }, [start]);
 
   return (
     <section id="set-aside" className="mt-10 scroll-mt-20">
@@ -54,13 +56,7 @@ export default function SetAsideList() {
           </div>
         ))}
       </div>
-      {pages && pages.length < total && (
-        <button type="button" className={`${lightBtn} mt-3`}
-          onClick={() => fetchPages(pages.length)
-            .then((d) => { setPages([...pages, ...d.pages]); setTotal(d.total); }).catch(setError)}>
-          Show more
-        </button>
-      )}
+      {pages && <Pager className="mt-3" start={start} total={total} size={20} go={setStart} what="pages" />}
     </section>
   );
 }

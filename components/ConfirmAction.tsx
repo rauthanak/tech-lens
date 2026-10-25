@@ -6,13 +6,14 @@ import { errorText } from "@/lib/api";
 /** A two-step button: the first click asks the question (with the cost of
  *  anything that uses the model), the second does it, then says so under the
  *  button (`doneLabel`) until the next click, or says why it couldn't.
- *  `disabled` is the reason it can't start now, shown under the button. */
+ *  `busyLabel` says what's happening while it runs. `disabled` is the reason it can't start now, shown under the button. */
 export default function ConfirmAction({
   label,
   cost,
   question,
   confirmLabel = "Start",
   doneLabel = confirmLabel === "Start" ? "Started" : "Done",
+  busyLabel = "Starting…",
   onConfirm,
   disabled,
   secondary = false,
@@ -22,6 +23,7 @@ export default function ConfirmAction({
   question: string;
   confirmLabel?: string;
   doneLabel?: string; // "Started" for a job (it then shows on its own card), else "Done"
+  busyLabel?: string;
   onConfirm: () => Promise<unknown> | void;
   disabled?: string | null;
   secondary?: boolean;
@@ -53,7 +55,7 @@ export default function ConfirmAction({
           <span className="text-ink">{question}</span>
           <button type="button" onClick={confirm} disabled={busy}
             className="rounded-full bg-navy px-3.5 py-1 text-sm text-white hover:bg-navy-strong disabled:opacity-50">
-            {busy ? "Starting…" : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </button>
           <button type="button" onClick={() => { setAsking(false); setError(null); }} disabled={busy}
             className="rounded-full border border-line bg-white px-3.5 py-1 text-sm hover:bg-ground">

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import Hood from "@/components/Hood";
 import ListEditor from "@/components/ListEditor";
@@ -11,6 +11,7 @@ import SavedNote from "@/components/SavedNote";
 import { clusterName } from "@/components/SourceBrowser";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import { formatTime } from "@/lib/format";
+import BackLink from "@/components/BackLink";
 
 type Progress = {
   search: string;
@@ -113,6 +114,7 @@ export default function SourceEditorPage() {
 
   return (
     <div>
+      <Suspense fallback={null}><BackLink fallback="/admin/sources" fallbackLabel="Sources" /></Suspense>
       <PageHeader eyebrow="Sources" title={form?.name ?? "Edit source"}
         intro="How the radar reads this source. Saving costs no model calls and applies from the next collection."
         help={<>

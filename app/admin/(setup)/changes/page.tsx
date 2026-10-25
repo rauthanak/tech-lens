@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
+import ConfirmAction from "@/components/ConfirmAction";
 import PageHeader from "@/components/PageHeader";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import Link from "next/link";
 import { formatAt, plural } from "@/lib/format";
 
 type FieldDiff = { field: string; seeding_value: unknown; live_value: unknown };
@@ -15,7 +17,9 @@ type Change = {
   updated_at: string | null;
   fields: FieldDiff[];
 };
-type ChangesResponse = { count: number; loaded_at: string | null; items: Change[] };
+type ChangesResponse = { count: number; loaded_at: string | null; items: Change[]; awaiting_review: Record<string, number> };
+const PER_REQUEST = 1000; // the API keeps at most this many edits per request
+const OPEN_UP_TO = 5;     // a list with more edits starts closed
 
 const LIST_LABELS: Record<string, string> = {
   sources: "Source",
@@ -42,7 +46,7 @@ const FIELD_LABELS: Record<string, string> = {
   lookback_days: "First-run lookback (days)",
   // Settings: judging technologies, finding evidence, time zone
   classify_after_collection: "Judge the evidence after each collection",
-  classify_token_budget: "Most tokens one judging run may use", classify_pages_cap: "Pages read per technology when judging",
+  classify_pages_cap: "Pages read per technology when judging",
   evidence_floor: "Pages needed before a technology counts as ready",
   wake_after_pages: "Flag a switched-off technology after this many new pages",
   find_evidence_results: "Find evidence: results per search", find_evidence_daily_budget: "Find evidence: searches per day",
@@ -60,6 +64,13 @@ const FIELD_LABELS: Record<string, string> = {
   weight: "Weight within its score", evidence_needed: "Proof needed to reach it", decision: "Then Tata can decide to",
 };
 const fieldLabel = (f: string) => FIELD_LABELS[f] ?? f.replaceAll("_", " ").replace(/^./, (x) => x.toUpperCase());
+
+/** What "Put back the default" does, by kind of edit. */
+const PUT_BACK: Record<Change["kind"], (label: string) => string> = {
+  edited: (l) => `Put “${l}” back to its default? The live values shown here are replaced by the default ones.`,
+  added: (l) => `Remove “${l}”? It was added here and isn't in the defaults.`,
+  deleted: (l) => `Bring “${l}” back, as in the defaults?`,
+};
 
 const key = (c: Change) => `${c.collection}:${c.id}`;
 
@@ -107,11 +118,16 @@ export default function ChangesPage() {
     setResult(null);
     const items = data.items.filter((c) => ticked.has(key(c))).map((c) => ({ collection: c.collection, id: c.id }));
     try {
-      const r = await sendJson<{ written: number; files: string[] }>("/api/changes/update-seeding-data", "POST", { items });
+      const files = new Set<string>();
+      for (let i = 0; i < items.length; i += PER_REQUEST) {
+        const r = await sendJson<{ written: number; files: string[] }>("/api/changes/update-seeding-data", "POST",
+          { items: items.slice(i, i + PER_REQUEST) });
+        r.files.forEach((f) => files.add(f));
+      }
       setResult({
         ok: true,
-        text: r.files.length
-          ? `Kept as the defaults (${r.files.join(", ")}). Saving a version shares them.`
+        text: files.size
+          ? `Kept as the defaults (${[...files].join(", ")}). Saving a version shares them.`
           : "Nothing to keep: those edits already match the defaults.",
       });
       setTicked(new Set());
@@ -150,6 +166,14 @@ export default function ChangesPage() {
             defaults.
           </p>
 
+          {Object.entries(data.awaiting_review ?? {}).map(([list, n]) => (
+            <p key={list} className="mt-4 text-sm text-neutral-700">
+              {plural(n, `${LIST_LABELS[list]?.toLowerCase() ?? list} the model proposed`, `${(LIST_LABELS[list] ?? list).toLowerCase()}s the model proposed`)}{" "}
+              {n === 1 ? "waits" : "wait"} for review; they show here once accepted.{" "}
+              <Link href="/admin/classification/domains" className="text-link hover:underline">Review on Domains →</Link>
+            </p>
+          ))}
+
           {result && (
             <p className={`mt-4 rounded-card border px-4 py-2 text-sm ${result.ok ? "border-line bg-white" : "border-failed/40 bg-failed/5 text-failed"}`}>
               {result.text}
@@ -184,16 +208,23 @@ export default function ChangesPage() {
                 )}
               </div>
 
-              <div className="mt-4 space-y-3">
-                {data.items.map((c) => (
+              <div className="mt-4 space-y-4">
+                {groups(data.items).map(([list, items]) => (
+                  <details key={list} open={items.length <= OPEN_UP_TO} className="group">
+                    <summary className="flex cursor-pointer list-none items-baseline gap-2 font-medium [&::-webkit-details-marker]:hidden">
+                      <span aria-hidden className="inline-block text-[9px] text-muted transition-transform group-open:rotate-90">▶</span>
+                      {LIST_LABELS[list] ?? list} <span className="font-normal text-muted">· {plural(items.length, "edit")}</span>
+                    </summary>
+                    <div className="mt-2 space-y-3">
+                {items.map((c) => (
                   <div key={key(c)} className="rounded-card border border-line bg-white px-5 py-3.5">
                     <label className="flex cursor-pointer flex-wrap items-center gap-3">
                       <input type="checkbox" checked={ticked.has(key(c))} onChange={() => toggle(key(c))} />
                       <span className="font-medium">
                         {LIST_LABELS[c.collection] ?? c.collection} · {c.label}
                       </span>
-                      <span className="bg-neutral-100 px-2 py-0.5 font-mono text-[11px] uppercase">
-                        {c.kind === "added" && "+ "}{c.kind}
+                      <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[12px]">
+                        {({ added: "Added", edited: "Edited", deleted: "Deleted" } as Record<string, string>)[c.kind] ?? c.kind}
                       </span>
                       {c.updated_at && (
                         <span className="font-mono text-[11px] text-neutral-500">edited {formatAt(c.updated_at)}</span>
@@ -202,7 +233,19 @@ export default function ChangesPage() {
                     <div className="mt-3 space-y-2.5">
                       {c.fields.map((f) => <FieldRow key={f.field} diff={f} kind={c.kind} />)}
                     </div>
+                    <div className="mt-3">
+                      <ConfirmAction label="Put back the default" secondary confirmLabel="Put it back"
+                        question={PUT_BACK[c.kind](c.label)}
+                        onConfirm={async () => {
+                          await sendJson("/api/changes/revert", "POST", { items: [{ collection: c.collection, id: c.id }] });
+                          configChanged();
+                          load();
+                        }} />
+                    </div>
                   </div>
+                ))}
+                    </div>
+                  </details>
                 ))}
               </div>
             </>
@@ -211,6 +254,13 @@ export default function ChangesPage() {
       )}
     </div>
   );
+}
+
+/** The edits by list, in the order the lists first appear (newest edit first). */
+function groups(items: Change[]): [string, Change[]][] {
+  const by = new Map<string, Change[]>();
+  for (const c of items) by.set(c.collection, [...(by.get(c.collection) ?? []), c]);
+  return [...by.entries()];
 }
 
 function FieldRow({ diff, kind }: { diff: FieldDiff; kind: Change["kind"] }) {

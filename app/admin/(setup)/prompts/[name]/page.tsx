@@ -13,6 +13,7 @@ import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { formatAt, formatDay, plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
 import { PROMPT_IMPACT, PromptDoc, type SkillMap, skillTitle, STAGE_MEANING, tokensUsed, UNKNOWN_IMPACT } from "@/lib/prompts";
+import BackLink from "@/components/BackLink";
 
 // a step's runs, named as the reader knows them
 const RUN_NOUN: Record<string, string> = { collect: "collection", organise: "Organize run", classify: "Classify run",
@@ -37,6 +38,10 @@ export default function PromptDetailPage() {
     fetchJson<{ recipes: { _id: string; name: string; skills: string[] }[] }>("/api/recipes")
       .then((d) => setRecipes(d.recipes.filter((r) => r.skills.includes(name))))
       .catch(() => {});
+  }, [name]);
+  const [month, setMonth] = useState<{ calls: number; written_per_call: number } | null>(null); // the last 30 days
+  useEffect(() => {
+    fetchJson<{ calls: number; written_per_call: number }>(`/api/usage/skill/${name}`).then(setMonth).catch(() => setMonth(null));
   }, [name]);
   const [map, setMap] = useState<SkillMap | null>(null);
   const hood = useHood();
@@ -109,6 +114,7 @@ export default function PromptDetailPage() {
 
   return (
     <div>
+      <Suspense fallback={null}><BackLink fallback="/admin/prompts" fallbackLabel="Skills" /></Suspense>
       <PageHeader eyebrow="Skill" title={doc?.title || skillTitle(name)} right={<TechnicalDetailsSwitch />}
         intro="One instruction the models follow. The step uses the new text the next time it runs."
         help={<>
@@ -127,9 +133,6 @@ export default function PromptDetailPage() {
           {hood && <span className="font-mono text-xs text-neutral-500">{name}</span>}
           {used.map((u) => <span key={u} className="text-xs text-neutral-500">{u}</span>)}
           <Link href="/admin/prompts/map" className="text-link underline underline-offset-4">where each skill is used</Link>
-          <Link href="/admin/prompts" className="text-link underline underline-offset-4">
-            back to skills
-          </Link>
         </p>
       </PageHeader>
 
@@ -186,6 +189,13 @@ export default function PromptDetailPage() {
                   is paid for as written tokens, often several times the answer, and calls take longer. A call that
                   carries several skills reasons when any of them asks to.
                 </span>
+                {month && (
+                  <span className="mt-1 block text-xs text-ink">
+                    {month.calls === 0 ? "Not called in the last 30 days, so switching costs nothing until it is."
+                      : `In the last 30 days: ${plural(month.calls, "call")}, each writing about ${month.written_per_call.toLocaleString()} tokens${
+                        doc?.reasoning === "on" ? " with reasoning on; switching it off writes far fewer" : "; with reasoning on, expect several times that"}. The number of calls doesn't change.`}
+                  </span>
+                )}
               </span>
             </label>
             {saveError && <p className="text-sm text-failed">Save failed: {saveError}</p>}

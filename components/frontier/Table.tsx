@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import FabricLabel from "@/components/FabricLabel";
+import Pager from "@/components/Pager";
 import {
   HORIZON_WORDS, type Item, type Lens, LENS_WORDS, leaderName, leaderText, measuresNote, moveReason, moveText, overrideNote,
   povHref,
 } from "@/components/frontier/items";
+import { useClientPage } from "@/lib/paging";
 import { formatScore, PRIORITY_LEGEND } from "@/lib/scoring";
 import { PRIORITY } from "@/lib/theme";
 
@@ -19,8 +21,8 @@ function Score({ value, scored }: { value: number | null; scored: Item["soon_sco
 }
 
 /** The grid's placed items as a list, in the same order: most urgent first,
- *  each saying whether it's a best bet now, how its priority moved since the
- *  edition before, and what a leader has recorded. */
+ *  50 a page (a phone opens on it), each saying whether it's a best bet now,
+ *  how its priority moved since the edition before, and what a leader has recorded. */
 export default function Table({ items, from, lens, frontier, since }: {
   items: Item[];
   from: string;
@@ -29,8 +31,14 @@ export default function Table({ items, from, lens, frontier, since }: {
   since?: string;
 }) {
   const th = "px-3 py-2 font-normal";
+  const paged = useClientPage(items, "frontier-table");
+  const pager = (className = "") => (
+    <Pager className={className} start={paged.start} total={paged.total} go={paged.go} shorter={paged.shorter} what="placements" />
+  );
   return (
-    // relative: keeps the table's scroll inside its box, not widening the page
+    <>
+    {pager("mb-2")}
+    {/* relative: keeps the table's scroll inside its box, not widening the page */}
     <div className="relative overflow-x-auto rounded-card border border-line bg-white">
       <table className="w-full min-w-[78rem] text-sm">
         <thead>
@@ -48,7 +56,7 @@ export default function Table({ items, from, lens, frontier, since }: {
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-100">
-          {items.map((item, i) => {
+          {paged.page.map((item, i) => {
             const href = povHref(item, from);
             return (
               <tr key={`${item.tech_id}:${item.fabric_id}:${i}`} className="align-top">
@@ -111,5 +119,7 @@ export default function Table({ items, from, lens, frontier, since }: {
       </table>
       <p className="border-t border-neutral-100 px-3 py-2 text-xs text-muted">{PRIORITY_LEGEND}.</p>
     </div>
+    {pager("mt-3")}
+    </>
   );
 }

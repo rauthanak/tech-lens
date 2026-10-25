@@ -7,6 +7,7 @@ import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
 import { AXIS_LABELS, Measure, OpenQuestionBadge, weightShare } from "@/lib/scoring";
 import { PRIORITY } from "@/lib/theme";
@@ -82,7 +83,7 @@ export default function ConfigPage() {
         <PageHeader title="Weights and grid" right={<TechnicalDetailsSwitch />}
           intro="The arithmetic that turns the twelve scores into the three scores and a priority, with no model calls."
           help={<>
-          <li>The three scores (Market Potential, Strategic Fit, Adoption Readiness): each is the weighted average
+          <li>The three scores (Market potential, Strategic fit, Adoption readiness): each is the weighted average
             of its measures. Weights are edited on the Measures tab. Technical details adds the measures&apos;
             codes.</li>
           <li>Priority grid: how soon it arrives (Maturity and Commercial adoption) crossed with how big the prize is
@@ -292,11 +293,11 @@ function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
                 {hood && <span className="font-mono text-xs text-neutral-500">{m.code} </span>}{m.name}
               </span>
               <span className="shrink-0 font-mono text-xs tabular-nums text-neutral-600">
-                {weightShare(m.weight ?? 0)}
+                {weightShare(m.weight ?? 0, total)}
               </span>
             </div>
             <div className="mt-1 h-1 bg-neutral-100">
-              <div className="h-1 bg-navy" style={{ width: `${(m.weight ?? 0) * 100}%` }} />
+              <div className="h-1 bg-navy" style={{ width: `${total > 0 ? ((m.weight ?? 0) / total) * 100 : 0}%` }} />
             </div>
           </div>
         ))}
@@ -307,7 +308,8 @@ function AxisColumn({ label, rows }: { label: string; rows: Measure[] }) {
         </p>
       </Hood>
       {Math.abs(total - 1) > 1e-9 && (
-        <p className="mt-1 font-mono text-[11px]">weights sum to {total.toFixed(2)} — should be 1.0</p>
+        <p className="mt-1 text-[11px] text-neutral-600">The weights add up to {total.toFixed(2)}; scoring divides each by
+          that, so the shares shown are the real ones.</p>
       )}
     </div>
   );
@@ -409,6 +411,14 @@ function GridCutpoints({ grid, onSave }: { grid: ConfigDoc; onSave: (c: Record<s
   const [t, setT] = useState((grid.timeline_cutpoints as number[]) ?? [4, 7]);
   const [p, setP] = useState((grid.potential_cutpoints as number[]) ?? [4, 7]);
   const bad = [t, p].some(([lo, hi]) => !(lo >= 0 && hi <= 10 && lo < hi));
+  const edges = { timeline_cutpoints: t, potential_cutpoints: p };
+  const [preview, setPreview] = useState<{ placed: number; moves: { from: string | null; to: string | null; count: number }[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const ask = () => {
+    setError(null);
+    sendJson<NonNullable<typeof preview>>("/api/scoring/edges/preview", "POST", edges)
+      .then(setPreview).catch((e) => setError(`Couldn't work out what would move: ${errorText(e)}`));
+  };
   const num = (v: number, set: (n: number) => void, label: string) => (
     <input type="number" min={0} max={10} step={0.5} value={v} aria-label={label}
       onChange={(e) => set(Number(e.target.value))} className={`${field} inline-block w-20`} />
@@ -430,14 +440,32 @@ function GridCutpoints({ grid, onSave }: { grid: ConfigDoc; onSave: (c: Record<s
       </p>
       {axis("How soon", t, setT, ["Far", "Mid", "Near"])}
       {axis("How big", p, setP, ["Low", "Mid", "High"])}
-      <div className="flex flex-wrap items-center gap-3">
-        <button type="button" disabled={bad} onClick={() => onSave({ timeline_cutpoints: t, potential_cutpoints: p })}
-          className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50">
-          Save the edges
-        </button>
-        <span className="text-xs text-neutral-500">{bad ? "Each lower edge must be below its upper edge, within 0–10."
-          : "Applies to new assessment runs; a past run takes it with Redo scores on its page."}</span>
-      </div>
+      {preview ? (
+        <div role="group" aria-label="Save the edges?" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <p>
+            {preview.moves.length === 0
+              ? `With these edges, none of the ${plural(preview.placed, "placed assessment")} changes priority.`
+              : <>With these edges, on each technology&apos;s latest assessment in each fabric:{" "}
+                {preview.moves.map((m) => `${m.count.toLocaleString()} move ${m.from ?? "no priority"} → ${m.to ?? "no priority"}`).join(", ")}
+                {" "}(of {preview.placed.toLocaleString()} placed).</>}
+            {" "}Worked out from their stored scores, no model calls. They move when an assessment run is redone or a new one runs.
+          </p>
+          <p className="mt-1.5 flex items-center gap-3">
+            <button type="button" onClick={() => { setPreview(null); onSave(edges); }}
+              className="rounded-full bg-navy px-3 py-1 text-white">Save the edges</button>
+            <button type="button" onClick={() => setPreview(null)} className="text-muted hover:text-ink">Cancel</button>
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" disabled={bad} onClick={ask}
+            className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50">
+            Save the edges
+          </button>
+          <span className="text-xs text-neutral-500">{bad ? "Each lower edge must be below its upper edge, within 0–10."
+            : error ?? "Says first what would move. Applies to new assessment runs; a past run takes it with Redo scores on its page."}</span>
+        </div>
+      )}
     </div>
   );
 }

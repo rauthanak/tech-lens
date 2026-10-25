@@ -19,6 +19,8 @@ export function duration(start?: string | null, end?: string | null): string {
 /** A date as "3 Oct" (in the browser's own order), in the zone it was done in when given. */
 export function formatDay(iso: string | null | undefined, tz?: string | null): string {
   if (!iso) return "—";
+  // a calendar day ("2026-10-15", a publication date) is that day everywhere: never shifted by a time zone
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) tz = "UTC";
   try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: tz ?? undefined }); }
   catch { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 }
@@ -75,3 +77,8 @@ export function formatDate(ymd: string, year = false): string {
   return new Date(`${ymd.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, {
     month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
 }
+
+/** A collection's chip: what finished, and how many sources couldn't, so "Done"
+ *  isn't read as "the whole process is done" (the later steps have their own). */
+export const collectedLabel = (status: string, failedSources = 0) =>
+  status === "completed" ? `Collected${failedSources ? ` · ${failedSources} ${failedSources === 1 ? "source" : "sources"} couldn't finish` : ""}` : undefined;

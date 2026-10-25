@@ -40,12 +40,12 @@ export const VERDICT_STYLE: Record<Verdict, string> = {
 
 export type Status = "placed" | "held" | "ready" | "thin" | "no_evidence" | "off";
 export const STATUS_LABELS: Record<Status, string> = {
-  placed: "Assessed", held: "Assessed, not placed", ready: "Ready to assess", thin: "Thin evidence",
+  placed: "Assessed, has a priority", held: "Assessed, no priority yet", ready: "Ready to assess", thin: "Thin evidence",
   no_evidence: "No evidence yet", off: "Switched off",
 };
 export const STATUS_MEANING: Record<Status, string> = {
-  placed: "Assessed, and placed on the grid in at least one fabric (computed, or set by a person).",
-  held: "Assessed, but not placed on the grid: the evidence couldn't score how soon or how big in any fabric.",
+  placed: "Assessed, with a priority (P1–P6) in at least one fabric, computed or set by a person.",
+  held: "Assessed, with no priority yet: the evidence couldn't score how soon or how big in any fabric.",
   ready: "Not assessed yet, and its evidence was judged enough (or strong), or a person confirmed it as possibly nascent.",
   thin: "Not assessed: its evidence was judged thin or not credible; or, before its evidence is judged, it has fewer pages than Setup › Settings asks for.",
   no_evidence: "No pages about it yet, such as an imported or hand-added technology.",

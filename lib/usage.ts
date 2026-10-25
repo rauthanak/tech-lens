@@ -25,10 +25,12 @@ export type RunUsage = Tokens & {
 };
 
 /** The kinds of run that call the model, in plain words. */
+// named by the step they belong to (RunSteps), so History reads like the steps
 export const RUN_KIND: Record<string, string> = {
-  collection: "Collection", resolve: "Organize", classify: "Classify", scoring: "Assessment",
-  pov: "Points of View", find_evidence: "Find evidence", import: "Import matching",
-  recheck: "Check again", diagnose: "Diagnostic call", value_refresh: "Use cases written again",
+  collection: "Collect", resolve: "Organize · merge names", classify: "Classify", scoring: "Assess",
+  pov: "Write Points of View", find_evidence: "Find evidence", import: "Import technologies",
+  recheck: "Collect · check again", diagnose: "Diagnostic call", value_refresh: "Assess · use cases again",
+  tag: "Organize · link known names",
 };
 
 /** Every token sent, reused ones included. */

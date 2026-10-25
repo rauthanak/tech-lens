@@ -22,6 +22,9 @@ const FRONTIER_READS = [
   /^\/api\/technologies\/labels$/,
 ];
 
+/** The one write it passes on: a leader opened or printed a Point of View, counted. */
+const FRONTIER_WRITE = /^\/api\/frontier\/pov\/[\w.~-]+\/seen$/;
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const under = (prefix: string) => pathname === prefix || pathname.startsWith(prefix + "/");
@@ -30,6 +33,7 @@ export function proxy(request: NextRequest) {
   if (process.env.APP_SIDE === "frontier") {
     if (under("/api")) {
       if (request.method === "GET" && FRONTIER_READS.some((r) => r.test(pathname))) return NextResponse.next();
+      if (request.method === "POST" && FRONTIER_WRITE.test(pathname)) return NextResponse.next();
       return NextResponse.json({ detail: "Not available on the executive address" }, { status: 403 });
     }
     if (pathname === "/") return NextResponse.rewrite(to("/frontier"));

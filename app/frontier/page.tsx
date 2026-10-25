@@ -2,16 +2,18 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
 import Grid from "@/components/frontier/Grid";
 import {
-  type Frontier, frontierOf, type Held, type Item, LEADER_STATES, type Lens, LENS_WORDS, moveReason, moveText,
+  biggestMoves, type Frontier, frontierOf, type Held, type Item, LEADER_STATES, type Lens, LENS_WORDS, moveReason, moveText,
   pastEmerging, povHref, type Published, upOf,
 } from "@/components/frontier/items";
 import Table from "@/components/frontier/Table";
 import { fetchJson } from "@/lib/api";
+import { VERDICT_STYLE, VERDICT_WORDS } from "@/lib/classification";
+import { useMedia } from "@/lib/media";
 import { formatAt, formatDate, plural } from "@/lib/format";
 import { useHere } from "@/lib/here";
 import { formatScore } from "@/lib/scoring";
@@ -87,6 +89,48 @@ function NotPlaced({ held, from, withFabric, lens }: { held: Held[]; from: strin
   );
 }
 
+/** One technology on the shortlists: its priority, name and scores, then what
+ *  the radar concludes (its Point of View's headline) and how solid the
+ *  evidence is, so a leader needn't open it to know what it says. */
+function Pick({ item: i, lens, from, withFabric, headline = true }: {
+  item: Item; lens: Lens; from: string; withFabric: boolean; headline?: boolean; // once per technology: its other fabrics skip it
+}) {
+  return (
+    <li>
+      <span className="flex flex-wrap items-baseline gap-x-2">
+        <Chip priority={i.priority} />
+        <span className="min-w-0"><Name item={i} from={from} withFabric={withFabric} /></span>
+        <span className="text-[12px] tabular-nums text-muted">
+          soon {formatScore(i.how_soon ?? 0)} · {lens === "defence" ? "threat" : "big"} {formatScore(upOf(i, lens) ?? 0)}
+        </span>
+        {i.evidence && (
+          <span className={`rounded px-1.5 py-px text-[11px] ${VERDICT_STYLE[i.evidence]}`} title="How solid its evidence is">
+            Evidence: {VERDICT_WORDS[i.evidence]}
+          </span>
+        )}
+      </span>
+      {headline && i.pov?.headline && <span className="mt-0.5 line-clamp-2 block text-[13px] text-neutral-700">{i.pov.headline}</span>}
+    </li>
+  );
+}
+
+/** The top priority: the Act corner of the grid, sooner first. */
+function ActNow({ items, lens, from, withFabric }: { items: Item[]; lens: Lens; from: string; withFabric: boolean }) {
+  const sorted = [...items].sort((a, b) => (b.how_soon ?? 0) - (a.how_soon ?? 0));
+  return (
+    <section className={card} aria-label="Act now: P1">
+      <h2 className="font-semibold">Act now: P1 <span className="font-normal text-muted">· {items.length}</span></h2>
+      <p className="mt-0.5 text-[12.5px] text-muted">The Act corner of the grid: sooner and {lens === "defence" ? "more of a threat" : "bigger"} than both solid lines, sooner first.</p>
+      {sorted.length === 0 ? <p className="mt-2 text-sm text-muted">Nothing is at P1 here.</p> : (
+        <ul className="mt-2 space-y-2.5 text-sm">
+          {sorted.map((i, n) => <Pick key={`${i.tech_id}:${i.fabric_id}`} item={i} lens={lens} from={from} withFabric={withFabric}
+            headline={sorted.findIndex((x) => x.tech_id === i.tech_id) === n} />)}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** The shortlist the frontier picks: nothing shown is both sooner and higher up. */
 function OnTheFrontier({ on, near, lens, from, withFabric }: {
   on: Item[]; near: Item[]; lens: Lens; from: string; withFabric: boolean;
@@ -99,16 +143,9 @@ function OnTheFrontier({ on, near, lens, from, withFabric }: {
         grid), sooner first.
       </p>
       {on.length === 0 ? <p className="mt-2 text-sm text-muted">Nothing is placed here.</p> : (
-        <ul className="mt-2 space-y-1 text-sm">
-          {on.map((i) => (
-            <li key={`${i.tech_id}:${i.fabric_id}`} className="flex flex-wrap items-baseline gap-x-2">
-              <Chip priority={i.priority} />
-              <span className="min-w-0"><Name item={i} from={from} withFabric={withFabric} /></span>
-              <span className="text-[12px] tabular-nums text-muted">
-                soon {formatScore(i.how_soon ?? 0)} · {lens === "defence" ? "threat" : "big"} {formatScore(upOf(i, lens) ?? 0)}
-              </span>
-            </li>
-          ))}
+        <ul className="mt-2 space-y-2.5 text-sm">
+          {on.map((i, n) => <Pick key={`${i.tech_id}:${i.fabric_id}`} item={i} lens={lens} from={from} withFabric={withFabric}
+            headline={on.findIndex((x) => x.tech_id === i.tech_id) === n} />)}
         </ul>
       )}
       {near.length > 0 && (
@@ -123,9 +160,13 @@ function OnTheFrontier({ on, near, lens, from, withFabric }: {
 }
 
 /** Each placement whose priority moved since the edition before, and why. */
+const FIRST_MOVES = 8; // the biggest moves shown first; the rest one click away
+
 function MovedSince({ moved, previous, from, withFabric }: {
   moved: Item[]; previous: Published["edition"]["previous"]; from: string; withFabric: boolean;
 }) {
+  const [all, setAll] = useState(false);
+  const ranked = biggestMoves(moved);
   return (
     <section className={card} aria-label="Moved since the last edition">
       <h2 className="font-semibold">
@@ -134,8 +175,8 @@ function MovedSince({ moved, previous, from, withFabric }: {
       </h2>
       {previous && (
         <p className="mt-0.5 text-[12.5px] text-muted">
-          Priorities that changed since the edition published {formatAt(previous.published_at, previous.tz)}; on the grid,
-          an arrow beside the dot.
+          Priorities that changed since the edition published {formatAt(previous.published_at, previous.tz)}, those into
+          P1 or P2 and the biggest jumps first, each with the score that moved; on the grid, an arrow beside the dot.
         </p>
       )}
       {!previous ? (
@@ -143,15 +184,22 @@ function MovedSince({ moved, previous, from, withFabric }: {
       ) : moved.length === 0 ? (
         <p className="mt-2 text-sm text-muted">Nothing shown here moved.</p>
       ) : (
-        <ul className="mt-2 space-y-1.5 text-sm">
-          {moved.map((i) => (
-            <li key={`${i.tech_id}:${i.fabric_id}`}>
-              <Name item={i} from={from} withFabric={withFabric} />{" "}
-              <span className="whitespace-nowrap font-mono text-[12px]">{moveText(i, undefined)}</span>
-              <span className="block text-[12.5px] text-muted">{i.moved && moveReason(i.moved)}</span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="mt-2 space-y-1.5 text-sm">
+            {(all ? ranked : ranked.slice(0, FIRST_MOVES)).map((i) => (
+              <li key={`${i.tech_id}:${i.fabric_id}`}>
+                <Name item={i} from={from} withFabric={withFabric} />{" "}
+                <span className="whitespace-nowrap font-mono text-[12px]">{moveText(i, undefined)}</span>
+                <span className="block text-[12.5px] text-muted">{i.moved && moveReason(i.moved)}</span>
+              </li>
+            ))}
+          </ul>
+          {ranked.length > FIRST_MOVES && (
+            <button type="button" onClick={() => setAll(!all)} aria-expanded={all} className="mt-2 text-sm text-link hover:underline">
+              {all ? `Show the ${FIRST_MOVES} biggest only` : `Show all ${ranked.length}`}
+            </button>
+          )}
+        </>
       )}
     </section>
   );
@@ -242,7 +290,10 @@ function FrontierView() {
   const path = usePathname() ?? "/frontier";
   const here = useHere();
   const fabric = params.get("fabric") ?? "";
-  const view = params.get("view") === "table" ? "table" : "grid";
+  // a phone opens on the table (390 dots don't fit a phone's width); the grid is one tap away
+  const narrow = useMedia("(max-width: 639px)");
+  const chosen = params.get("view");
+  const view = chosen === "table" || chosen === "grid" ? chosen : narrow ? "table" : "grid";
   const lens: Lens = params.get("lens") === "defence" ? "defence" : "growth";
   // "" emerging (the default: all but the stages past it), "mature" only those, "all" both
   const stage = params.get("stage") === "mature" ? "mature" : params.get("stage") === "all" ? "all" : "";
@@ -260,6 +311,7 @@ function FrontierView() {
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
+    next.delete("at"); // another choice starts the table at its first rows
     const q = next.toString();
     return q ? `${path}?${q}` : path;
   };
@@ -270,9 +322,10 @@ function FrontierView() {
   const stale = loaded != null && loaded.fabric !== fabric; // the next fabric is on its way
   const shown = loaded?.fabric ?? fabric; // the fabric the data on screen is for
   const inStage = (i: Item) => stage === "all" || (stage === "mature") === pastEmerging(i);
-  const staged = (data?.placed ?? []).filter(inStage);
+  const staged = useMemo(() => (data?.placed ?? []).filter(inStage), [data, stage]); // eslint-disable-line react-hooks/exhaustive-deps
   // in Defence, a placement without Tata's Disruption threat entry has no height: it waits, with why
-  const placed = lens === "defence" ? staged.filter((i) => i.threat != null) : staged;
+  // (kept the same between renders, so the grid's layout isn't worked out again)
+  const placed = useMemo(() => (lens === "defence" ? staged.filter((i) => i.threat != null) : staged), [staged, lens]);
   const held = [...(data?.held ?? []).filter(inStage),
     ...(lens === "defence" ? staged.filter((i) => i.threat == null).map((i) => ({ ...i, reason: i.threat_missing ?? "Disruption threat not entered by Tata yet" })) : [])];
   const past = new Set([...(data?.placed ?? []), ...(data?.held ?? [])].filter(pastEmerging).map((i) => i.tech_id)).size;
@@ -282,7 +335,7 @@ function FrontierView() {
   const [bigLo, bigHi] = data?.cutpoints.how_big ?? [4, 7];
   const techs = new Set(placed.map((p) => p.tech_id)).size;
   const band = data?.near_band ?? 0.5;
-  const frontier = frontierOf(placed, lens, band);
+  const frontier = useMemo(() => frontierOf(placed, lens, band), [placed, lens, band]); // compares every pair of dots
   const onList = placed.filter((i) => frontier.on.has(i))
     .sort((a, b) => (b.how_soon ?? 0) - (a.how_soon ?? 0) || (upOf(b, lens) ?? 0) - (upOf(a, lens) ?? 0));
   const nearList = placed.filter((i) => frontier.near.has(i));
@@ -303,10 +356,10 @@ function FrontierView() {
             threat Tata enters instead.</li>
           <li>Colour is the priority, from P1 act now (darkest) to P6 just watch (lightest). A ring means a person set
             it; an arrow means it moved since the edition before.</li>
-          <li>The corners: Act (sooner and bigger), Plan (bigger, but later), Wait (sooner, but smaller) and Watch
-            (later and smaller), split by the dotted lines at {soonLo} and {soonHi}{" "}
-            across{bigLo !== soonLo || bigHi !== soonHi ? ` and ${bigLo} and ${bigHi} up` : " and up"}, where the
-            priority changes. The blue line marks the best bets now; the hatched band, within {band} of it, those close
+          <li>The corners: Act (sooner and bigger, past both solid lines: exactly the P1 dots), Plan (bigger, but
+            later), Wait (sooner, but smaller) and Watch (the rest). The solid lines sit at {soonHi} across and {bigHi}{" "}
+            up; the dotted ones at {soonLo}{bigLo !== soonLo ? ` across and ${bigLo} up` : ""} mark where the priority
+            changes again. The blue line marks the best bets now; the hatched band, within {band} of it, those close
             behind.</li>
           <li>Click a dot, or Read in the table, for its Point of View in this edition: what Tata Communications should
             do, and why.</li>
@@ -356,7 +409,7 @@ function FrontierView() {
                   "Up is how big the prize is, or the Disruption threat Tata enters (the threat to existing revenue if Tata does nothing); a dot without Tata's entry waits under Not placed yet"],
                 ["Stage", "stage", stage, [["", "Emerging"], ["mature", pastName], ["all", "All stages"]],
                   `How far a technology is on the market: Research, Pilot, Early commercial or ${pastName}. Emerging shows every stage but ${pastName}, including those not judged yet`],
-                ["Show as", "view", view === "table" ? "table" : "", [["", "Grid"], ["table", "Table"]],
+                ["Show as", "view", view, [["grid", "Grid"], ["table", "Table"]],
                   "The table lists the same dots, most urgent first"],
               ] as const).map(([label, key, current, options, hint]) => (
                 <nav key={key} aria-label={label} title={hint} className="flex items-center rounded-full border border-line bg-white p-0.5 text-sm">
@@ -389,7 +442,8 @@ function FrontierView() {
             )}
           </div>
 
-          <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+          <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+            <ActNow items={placed.filter((i) => i.priority === "P1")} lens={lens} from={here} withFabric={withFabric} />
             <OnTheFrontier on={onList} near={nearList} lens={lens} from={here} withFabric={withFabric} />
             <MovedSince moved={placed.filter((i) => i.moved)} previous={data.edition.previous} from={here} withFabric={withFabric} />
             <Committed items={placed} />

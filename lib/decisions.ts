@@ -15,7 +15,7 @@ export type Decision = {
 
 export type DecisionIn = {
   kind: "move" | "override" | "hand_score" | "accept_gap" | "tata_entry" | "nascent" | "catalog" | "use_case" | "path_step"
-    | "finance" | "bottlenecks" | "commitment";
+    | "finance" | "bottlenecks" | "commitment" | "watch_threshold" | "watch_crossed";
   tech_id: string;
   fabric_id?: string | null;
   measure_id?: string | null;

@@ -6,11 +6,11 @@ import ActButton from "@/components/ActButton";
 import ConfirmAction from "@/components/ConfirmAction";
 import { NascentAnswer, type YesReplaces } from "@/components/NascentFlag";
 import { usePublish } from "@/components/PublishEdition";
-import { calls, resumeAssessment, startAssessment, startCheck, startClassify, writePovs } from "@/lib/actions";
+import { assessQuestion, assessSet, calls, resumeAssessment, runCalls, startCheck, startClassify, writePovs } from "@/lib/actions";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { type GateItem, gateRow, type GateRow } from "@/lib/gates";
-import { type AnalystItem, blockedReason, isLive, usePipeline } from "@/lib/pipeline";
+import { type AnalystItem, blockedReason, isLive, type Offer, usePipeline } from "@/lib/pipeline";
 import { itemHref, itemSentence } from "@/lib/waiting";
 
 const SHOWN = 5;
@@ -49,9 +49,12 @@ function Card({ row, action, perTech }: Entry) {
           {list.length > SHOWN && (
             <li>
               <button type="button" onClick={() => setAll(!all)} className="text-link hover:underline">
-                {all ? "Show fewer" : `Show all ${list.length}`}
+                {all ? "Show fewer" : `Show ${list.length - SHOWN} more here`}
               </button>
             </li>
+          )}
+          {row.count > list.length && row.href && (  // only the first ones come with To do; the list has them all
+            <li><Link href={row.href} className="text-link hover:underline">All {row.count.toLocaleString()}, in the list →</Link></li>
           )}
         </ul>
       )}
@@ -83,23 +86,29 @@ export function openTodo(id: string | null): void {
 /** One column of the To do strip: its title, the first rows in a few words
  *  (each opening where it's done), and Open, which shows the full list
  *  below the strip. */
-function Column({ id, title, lines, more, open, onToggle }: {
-  id: string; title: string; lines: { key: string; text: string; href?: string }[] | null; more: number;
-  open: boolean; onToggle: () => void;
+function Column({ id, title, lines, more, open, onToggle, count }: {
+  id: string; title: string; lines: { key: string; text: string; href?: string; opens?: boolean }[] | null; more: number;
+  open: boolean; onToggle: () => void; count?: number;
 }) {
   return (
     <div className={`px-5 py-4 ${open ? "bg-navy/[0.04]" : ""}`}>
       <h3 className="flex items-baseline justify-between gap-3">
         <button type="button" aria-expanded={open} aria-controls={`todo-${id}`} onClick={onToggle}
-          className="text-left text-[15px] font-semibold hover:underline">{title}</button>
+          className="text-left text-[15px] font-semibold hover:underline">
+          {title}{count !== undefined && <span className="ml-1.5 font-normal text-muted sm:hidden">· {count}</span>}
+        </button>
         <button type="button" aria-expanded={open} aria-controls={`todo-${id}`} onClick={onToggle}
           className="shrink-0 text-[12.5px] text-link hover:underline">{open ? "Close ▴" : "Open ▾"}</button>
       </h3>
       {lines && (
-        <ul className="mt-1.5 space-y-1 text-[13px]">
+        // on a phone, one line per column: its title and count; Open shows the list
+        <ul className="mt-1.5 hidden space-y-1 text-[13px] sm:block">
           {lines.length === 0 && <li className="text-muted">Nothing waits</li>}
           {lines.map((l) => (
-            <li key={l.key}>{l.href ? <Link href={l.href} className="hover:underline">{l.text}</Link> : l.text}</li>
+            // a line that goes somewhere looks it: its list, or (with no list of its own) the column's answers below
+            <li key={l.key}>{l.href ? <Link href={l.href} className="text-link hover:underline">{l.text} →</Link>
+              : l.opens ? <button type="button" onClick={onToggle} className="text-left text-link hover:underline">{l.text} ▾</button>
+                : l.text}</li>
           ))}
           {more > 0 && <li><button type="button" onClick={onToggle} className="text-muted hover:underline">and {plural(more, "more thing")}</button></li>}
         </ul>
@@ -147,9 +156,9 @@ export default function TodoStrip() {
           onConfirm={() => resumeAssessment(i.scoring_run_id)} />
       );
       case "assess": return (
-        <ConfirmAction secondary label={`Assess ${them(i.count)} again`} cost={calls(i.calls)} disabled={blocked}
-          question={`Assess ${plural(i.count, "technology", "technologies")} with new pages? About ${plural(i.calls, "model call")} (up to ${i.calls_max}).`}
-          onConfirm={() => startAssessment(i.tech_ids)} />
+        <ConfirmAction secondary label={`Assess ${them(i.count)} again`} cost={calls(runCalls(i))} disabled={blocked}
+          question={assessQuestion(i, "with new pages")}
+          onConfirm={() => assessSet("new_evidence")} />
       );
       case "write": return (
         <ConfirmAction secondary label={`Write ${them(i.count)}`} cost={calls(i.calls)} confirmLabel="Write" doneLabel="Started"
@@ -169,13 +178,13 @@ export default function TodoStrip() {
       case "classify": return { row, action: (
         <ConfirmAction secondary label={`Classify ${them(item.count)}`} cost={calls(item.calls ?? item.count)}
           disabled={isLive(p?.classify?.status) ? "Technologies are being classified now." : null}
-          question={`Classify ${plural(item.count, "technology", "technologies")} with new pages? One model call each, within the run's token budget (Setup › Settings).`}
+          question={`Classify ${plural(item.count, "technology", "technologies")} with new pages? One model call each, catalog technologies first.`}
           onConfirm={() => startClassify(null)} />
       ) };
       case "ready_to_assess": return { row, action: (
-        <ConfirmAction secondary label={`Assess ${them(item.count)}`} cost={calls(item.calls ?? 0)} disabled={blocked}
-          question={`Assess ${plural(item.count, "technology", "technologies")} ready to assess? About ${plural(item.calls ?? 0, "model call")}.`}
-          onConfirm={() => startAssessment((item as GateItem & { tech_ids?: string[] }).tech_ids ?? [])} />
+        <ConfirmAction secondary label={`Assess ${them(item.count)}`} cost={calls(runCalls(item as Offer))} disabled={blocked}
+          question={assessQuestion(item as Offer, "ready to assess")}
+          onConfirm={() => assessSet("ready")} />
       ) };
       case "nascent": return { row, perTech: (i) => (
         <NascentAnswer compact techId={techs[i].tech_id} replaces={techs[i].replaces} onDone={again} />
@@ -190,8 +199,8 @@ export default function TodoStrip() {
   const gate1 = [...fromPipeline(["check", "resume", "assess"]), ...(gates?.gate1 ?? []).map(entry)];
   const gate2 = [...fromPipeline(["write"]), ...(gates?.gate2 ?? []).map(entry)];
   const lists = [
-    { id: "before-scoring", title: "Before scoring", rows: gate1, intro: "What to settle before technologies are assessed.",
-      empty: "Nothing waits before scoring. The next collection may bring some." },
+    { id: "before-scoring", title: "Before assessing", rows: gate1, intro: "What to settle before technologies are assessed.",
+      empty: "Nothing waits before assessing. The next collection may bring some." },
     { id: "before-publishing", title: "Before publishing", rows: gate2,
       intro: "What to settle before a Point of View goes to leaders. Advice, not a gate: whatever is unsettled goes out as it stands, with its reason.", empty: "Nothing waits before publishing." },
   ];
@@ -203,7 +212,8 @@ export default function TodoStrip() {
         <div className="grid grid-cols-1 divide-y divide-neutral-100 md:grid-cols-3 md:divide-x md:divide-y-0">
           {lists.map((l) => (
             <Column key={l.id} id={l.id} title={l.title} open={open === l.id} onToggle={() => toggle(l.id)}
-              lines={gates ? l.rows.slice(0, PEEK).map((r) => ({ key: r.row.key, text: r.row.sentence, href: r.row.href })) : null}
+              count={gates ? l.rows.length : undefined}
+              lines={gates ? l.rows.slice(0, PEEK).map((r) => ({ key: r.row.key, text: r.row.sentence, href: r.row.href, opens: !r.row.href })) : null}
               more={Math.max(0, l.rows.length - PEEK)} />
           ))}
           <Column id="publish" title="Publish to leaders" open={open === "publish"} onToggle={() => toggle("publish")}

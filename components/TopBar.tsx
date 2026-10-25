@@ -47,10 +47,11 @@ export default function TopBar() {
         className={`flex items-center gap-2 border-b-2 px-3 py-2 text-sm ${item.active(pathname)
           ? "border-azure text-white" : "border-transparent text-white/70 hover:text-white"}`}>
         {item.label}
-        {item.label === "Setup" && changes > 0 && (
-          <span title="Setup edits not yet kept as the defaults"
+        {item.label === "Setup" && changes.count > 0 && (
+          <span title={`${changes.count.toLocaleString()} setup ${changes.count === 1 ? "edit" : "edits"} not yet kept as the defaults`}
+            aria-label={`${changes.count.toLocaleString()} unsaved setup changes`}
             className="rounded-full bg-azure px-1.5 font-mono text-[10px] text-ink">
-            {changes}
+            {changes.count.toLocaleString()}
           </span>
         )}
       </Link>
@@ -82,6 +83,9 @@ export default function TopBar() {
           {menu(MAIN)}
           <span aria-hidden className="my-1 h-px w-full bg-white/15" />
           {menu(WORK)}
+          <span aria-hidden className="my-1 h-px w-full bg-white/15" />
+          <a href={process.env.NEXT_PUBLIC_FRONTIER_URL ?? "http://localhost:3200"} target="_blank" rel="noreferrer"
+            className="px-3 py-2 text-sm text-white/70 hover:text-white">Leaders&apos; view ↗</a>
         </nav>
       )}
     </header>

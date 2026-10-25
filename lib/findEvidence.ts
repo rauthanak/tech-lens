@@ -5,14 +5,18 @@
 
 import { useEffect, useState } from "react";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
+import { whenVisible } from "@/lib/visible";
 
 export type Gap = {
-  kind: "technology" | "measure" | "use_case" | "link";
+  kind: "technology" | "measure" | "use_case" | "link" | "links";
   tech_id: string;
   fabric_id?: string | null;
   measure_id?: string | null;
   url?: string;
   target?: "technology" | "measure" | "use_case";
+  urls?: string[]; // Add evidence: the links a person gave
+  through?: "judge" | "pov"; // Add evidence: stop once its evidence is judged, or go on to the Point of View
+  assess_anyway?: boolean;
 };
 
 /** One address a job found: filed under the technology, already collected,
@@ -38,7 +42,8 @@ export type Job = {
 export type Preview = { configured: boolean; query: string | null; searches: number; page_reads: number; reruns: number;
   budget: { used: number; limit: number }; why_not: string | null };
 
-const STAGES: Record<string, string> = { reading: "Reading the pages found…", "re-running": "Running the gap's call again…" };
+const STAGES: Record<string, string> = { reading: "Reading the pages found…", "re-running": "Running the gap's call again…",
+  assessing: "Assessing it…", writing: "Writing its Point of View…" };
 export const stageWords = (j: Job | null) =>
   (j?.stage && STAGES[j.stage]) || (j?.searched === false ? "Reading the page…" : "Searching…");
 
@@ -50,17 +55,19 @@ export function useJob(jobId: string | null, onDone?: () => void): Job | null {
   useEffect(() => {
     if (!jobId) return;
     let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopWait = () => {}; // a hidden tab waits to be shown before it asks again
     const tick = () => fetchJson<Job>(`/api/find-evidence/${jobId}`).then((j) => {
       if (!live) return;
       setJob(j);
-      if (j.status === "running") setTimeout(tick, 3000);
+      if (j.status === "running") timer = setTimeout(() => { stopWait = whenVisible(tick); }, 3000);
       else {
         onDone?.();
         window.dispatchEvent(new CustomEvent(ENDED, { detail: j.gap.tech_id }));
       }
-    }).catch(() => { if (live) setTimeout(tick, 5000); });
+    }).catch(() => { if (live) timer = setTimeout(() => { stopWait = whenVisible(tick); }, 5000); });
     tick();
-    return () => { live = false; };
+    return () => { live = false; clearTimeout(timer); stopWait(); }; // no fetch after leaving the page
   }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
   return job;
 }

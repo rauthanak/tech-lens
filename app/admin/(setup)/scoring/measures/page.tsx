@@ -5,7 +5,7 @@ import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
-import { AXIS_LABELS, AXIS_ORDER, Measure, type MeasureScope, OpenQuestionBadge, SCOPE_LABELS, SCOPE_MEANING, weightShare } from "@/lib/scoring";
+import { AXIS_LABELS, AXIS_ORDER, Measure, type MeasureScope, axisTotals, OpenQuestionBadge, SCOPE_LABELS, SCOPE_MEANING, weightShare } from "@/lib/scoring";
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -59,7 +59,7 @@ export default function MeasuresPage() {
       <PageHeader title="Measures"
         intro="The twelve questions every technology is scored on, from 0 to 10, in each fabric it touches."
         help={<>
-        <li>They&apos;re grouped by the three scores they feed: Market Potential, Strategic Fit and Adoption
+        <li>They&apos;re grouped by the three scores they feed: Market potential, Strategic fit and Adoption
           Readiness. Disruption threat and Serviceable capture feed the priority grid; Capability gap feeds the
           Point of View.</li>
         <li>Scored: per technology (judged once, for the technology as a whole, and used in every fabric), per
@@ -116,7 +116,7 @@ export default function MeasuresPage() {
                           {SCOPE_LABELS[m.scope ?? "fabric"]}
                         </span>
                         <span className="shrink-0 font-mono text-xs tabular-nums text-neutral-600">
-                          {weightShare(m.weight)}
+                          {weightShare(m.weight, axisTotals(measures)[m.axis])}
                         </span>
                         <OpenQuestionBadge question={m.open_question} />
                         <span className="shrink-0 text-sm text-link">Edit</span>
@@ -152,6 +152,7 @@ export default function MeasuresPage() {
                   onChange={(e) =>
                     setSelected({ ...selected, weight: e.target.value === "" ? null : Number(e.target.value) })
                   } />
+                <SharesAfter measures={measures ?? []} edited={selected} />
               </div>
             </div>
             <div>
@@ -203,5 +204,21 @@ export default function MeasuresPage() {
         )}
       </div>
     </div>
+  );
+}
+
+
+/** While a weight is edited: each measure's real share of its score once it's
+ *  saved. A score's weights are always divided by their sum, so the shares
+ *  add up to 100% whatever the weights add up to. */
+function SharesAfter({ measures, edited }: { measures: Measure[]; edited: Measure }) {
+  const rows = measures.filter((m) => m.axis === edited.axis).map((m) => (m._id === edited._id ? edited : m));
+  if (rows.length < 2 || edited.weight == null) return null;
+  const total = rows.reduce((t, m) => t + (m.weight ?? 0), 0);
+  return (
+    <p className="mt-1 text-xs text-neutral-500">
+      Shares of {AXIS_LABELS[edited.axis] ?? "its score"} after saving: {rows.map((m) => `${m.name} ${weightShare(m.weight, total)}`).join(", ")}
+      {Math.abs(total - 1) > 1e-9 && ` (the weights add up to ${total.toFixed(2)}; scoring divides each by that, so the shares add up to 100%)`}.
+    </p>
   );
 }

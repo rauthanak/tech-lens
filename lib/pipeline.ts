@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { fetchJson } from "@/lib/api";
+import { hidden } from "@/lib/visible";
 
 // GET /api/pipeline, polled once for every reader: every 5 s while anything
 // runs, every 30 s otherwise, and again when the window regains focus. After
@@ -14,11 +15,15 @@ export type Job = { id: string; status: string; done: number; total: number; sta
 /** Pages that couldn't be analysed, grouped by reason. */
 export type FailureGroup = { reason: string; detail: string; pages: number; sources: string[] };
 
+/** A set the radar offers to assess (services/tech_status.offer): its size and cost, never its ids, which grow
+ *  with the radar. `run`: more than one run takes, so this is what the first run takes. */
+export type Offer = { count: number; calls: number; calls_max?: number; run?: { count: number; calls: number } };
+
 /** What is waiting for the analyst, in process order (at most three). */
 export type AnalystItem =
   | { kind: "check"; count: number; calls: number }
   | { kind: "resume"; scoring_run_id: string; started_at: string; count: number; calls: number }
-  | { kind: "assess"; count: number; calls: number; calls_max: number; tech_ids: string[] }
+  | ({ kind: "assess" } & Offer)
   | { kind: "write"; count: number; calls: number };
 
 export type Pipeline = {
@@ -61,6 +66,7 @@ export type Pipeline = {
     skipped?: number;
   };
   pov: { composed: number; pending: number; job: (Job & { failed: number }) | null };
+  linking?: { status: string; stage?: string; done?: number; total?: number }; // Link known names, the latest run
   problems: number;
   for_analyst: AnalystItem[];
 };
@@ -70,6 +76,7 @@ export const STAGE_WORDS: Record<string, string> = {
   orchestrating: "Planning",
   crawling: "Collecting",
   resolving: "Organizing technologies",
+  linking: "Linking known names",
   classifying: "Classifying technologies",
   done: "Done",
   preparing: "Preparing",
@@ -85,35 +92,58 @@ export const isLive = (status?: string | null) => status === "running" || status
 export const anyLive = (p: Pipeline | null) =>
   !!p && (isLive(p.collect.status) || p.signals.recheck?.status === "running" ||
     isLive(p.assess.status) || p.pov.job?.status === "running" ||
-    p.technologies.resolve_status === "running");
+    p.technologies.resolve_status === "running" || p.linking?.status === "running");
 
 let current: Pipeline | null = null;
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
+let last = 0;                  // when it was last asked
+let inFlight: Promise<void> | null = null;
+const SOON_MS = 5000;          // a focus or a return to the tab within this of the last ask doesn't ask again
 
-/** Fetch now, tell every reader, and schedule the next poll. */
+/** Fetch now, tell every reader, and schedule the next poll. A tab in the
+ *  background schedules nothing; it asks again when it's shown. */
 export function refreshPipeline(): Promise<void> {
   clearTimeout(timer);
-  return fetchJson<Pipeline>("/api/pipeline")
+  if (inFlight) return inFlight; // one request at a time, shared by every caller
+  last = Date.now();
+  inFlight = fetchJson<Pipeline>("/api/pipeline")
     .then((p) => { current = p; })
     .catch(() => {}) // keep the last good state; the next poll retries
     .finally(() => {
+      inFlight = null;
       listeners.forEach((listener) => listener());
-      if (listeners.size) timer = setTimeout(refreshPipeline, anyLive(current) ? 5000 : 30000);
+      timer = listeners.size && !hidden() ? setTimeout(poll, anyLive(current) ? 5000 : 30000) : undefined;
     });
+  return inFlight;
+}
+
+/** The scheduled poll: a tab hidden since it was scheduled asks nothing (it asks when shown). */
+function poll() {
+  if (hidden()) { timer = undefined; return; }
+  refreshPipeline();
+}
+
+/** Back on the page (focus, or the tab shown again): ask, unless it just did. */
+function back() {
+  if (!hidden() && Date.now() - last > SOON_MS) refreshPipeline();
+  else if (!hidden() && !timer) refreshPipeline();
 }
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
   if (listeners.size === 1) {
-    window.addEventListener("focus", refreshPipeline);
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
     refreshPipeline();
   }
   return () => {
     listeners.delete(onChange);
     if (listeners.size === 0) {
       clearTimeout(timer);
-      window.removeEventListener("focus", refreshPipeline);
+      timer = undefined;
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
     }
   };
 }

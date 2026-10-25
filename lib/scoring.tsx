@@ -42,12 +42,14 @@ export const SCOPE_MEANING: Record<MeasureScope, string> = {
   tata: "Not asked of the model: Tata Communications enters it on the technology's page. Until then it waits, and the Before publishing list shows it.",
 };
 
-export const AXIS_LABELS: Record<string, string> = {
-  market_potential: "Market Potential",
-  strategic_fit: "Strategic Fit",
-  adoption_readiness: "Adoption Readiness",
-  extra: "Also scored, not part of the three scores",
+/** The three scores, in order: every screen names them from here. */
+export const SCORE_NAMES: Record<string, string> = {
+  market_potential: "Market potential",
+  strategic_fit: "Strategic fit",
+  adoption_readiness: "Adoption readiness",
 };
+/** A measure's axis: one of the three scores, or scored alongside them. */
+export const AXIS_LABELS: Record<string, string> = { ...SCORE_NAMES, extra: "Also scored, not part of the three scores" };
 /** What each of the three scores asks, in a few words. */
 export const AXIS_MEANING: Record<string, string> = {
   market_potential: "how big the prize could be",
@@ -56,7 +58,15 @@ export const AXIS_MEANING: Record<string, string> = {
 };
 
 /** A measure's weight as its share of its score: 0.4 → "40%". */
-export const weightShare = (w: number | null | undefined) => (w == null ? "—" : `${Math.round(w * 100)}%`);
+/** A measure's real share of its score. Scoring divides each weight by the
+ *  sum of its score's weights (agent/analyzer/engine.rollup_tora), so 0.4
+ *  among weights adding to 1.2 is 33%, not 40%. */
+export const weightShare = (w: number | null | undefined, total = 1) =>
+  w == null ? "—" : `${Math.round((total > 0 ? w / total : 0) * 100)}%`;
+
+/** Each score's weights added up, by axis: what weightShare divides by. */
+export const axisTotals = (measures: Measure[]) =>
+  measures.reduce<Record<string, number>>((t, m) => ({ ...t, [m.axis]: (t[m.axis] ?? 0) + (m.weight ?? 0) }), {});
 
 /** The priority and horizon codes in words, for one legend line per list. */
 export const PRIORITY_LEGEND = "Priority P1 (act now) to P6 (just watch)";
@@ -95,6 +105,8 @@ export type Placement = {
   horizon: string | null;
   timeline?: { score: number | null; band?: string | null; scored?: number; of?: number; partial?: boolean };
   potential?: { score: number | null; band?: string | null; scored?: number; of?: number; partial?: boolean };
+  disruptiveness?: { score: number | null; band?: string | null };
+  priority_by_disruptiveness?: string | null;
 };
 
 /** A 0–10 score with at most one decimal: 7.29 → "7.3", 8 → "8". */

@@ -7,11 +7,11 @@ import ConfirmAction from "@/components/ConfirmAction";
 import OperationsTabs from "@/components/OperationsTabs";
 import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
-import { calls, startAssessment } from "@/lib/actions";
+import { assessQuestion, assessSet, calls, runCalls } from "@/lib/actions";
 import { errorText, fetchJson } from "@/lib/api";
 import { formatAt, plural } from "@/lib/format";
 import type { GateItem } from "@/lib/gates";
-import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
+import { blockedReason, type Offer, stageWord, usePipeline } from "@/lib/pipeline";
 import { useTechLabel } from "@/lib/tech-labels";
 
 type ScoringRun = {
@@ -28,7 +28,7 @@ type ScoringRun = {
 
 /** Gate 1's "ready to assess": the evidence verdict decides it, and the page
  *  floor only for technologies not classified yet (services/radar_status). */
-type Ready = { count: number; calls: number; tech_ids: string[] };
+type Ready = Offer;
 
 export default function AssessmentsPage() {
   const p = usePipeline();
@@ -47,8 +47,8 @@ export default function AssessmentsPage() {
       .catch(setError);
     fetchJson<{ gate1: GateItem[] }>("/api/gates")
       .then((g) => {
-        const item = g.gate1.find((i) => i.kind === "ready_to_assess") as (GateItem & { tech_ids?: string[] }) | undefined;
-        setReady({ count: item?.count ?? 0, calls: item?.calls ?? 0, tech_ids: item?.tech_ids ?? [] });
+        const item = g.gate1.find((i) => i.kind === "ready_to_assess") as (GateItem & Offer) | undefined;
+        setReady(item ?? { count: 0, calls: 0 });
         setReadyError(null);
       })
       .catch((e) => setReadyError(errorText(e)));
@@ -86,9 +86,9 @@ export default function AssessmentsPage() {
       {toAssess && (
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-card border border-azure/30 bg-azure/5 px-5 py-3 text-sm">
           <span>{plural(toAssess.count, "technology has", "technologies have")} new pages since their assessment.</span>
-          <ConfirmAction label="Assess them again" cost={calls(toAssess.calls)}
-            question={`Assess ${plural(toAssess.count, "technology", "technologies")} with new pages? About ${plural(toAssess.calls, "model call")} (up to ${toAssess.calls_max}).`}
-            disabled={blocked} onConfirm={() => startAssessment(toAssess.tech_ids)} />
+          <ConfirmAction label="Assess them again" cost={calls(runCalls(toAssess))}
+            question={assessQuestion(toAssess, "with new pages")}
+            disabled={blocked} onConfirm={() => assessSet("new_evidence")} />
         </div>
       )}
 
@@ -111,10 +111,10 @@ export default function AssessmentsPage() {
             <Link href="/admin/sources/settings" className="text-link hover:underline">Settings</Link>).
           </p>
         </div>
-        <ConfirmAction label={ready?.count === 1 ? "Assess it" : "Assess them"} cost={ready ? calls(ready.calls) : undefined}
-          question={`Assess ${plural(ready?.count ?? 0, "technology", "technologies")} ready to assess? About ${plural(ready?.calls ?? 0, "model call")}: one for each technology and one for each fabric it touches.`}
+        <ConfirmAction label={ready?.count === 1 ? "Assess it" : "Assess them"} cost={ready ? calls(runCalls(ready)) : undefined}
+          question={assessQuestion(ready ?? { count: 0, calls: 0 }, "ready to assess", ": one for each technology and one for each fabric it touches")}
           disabled={blocked ?? (!ready?.count ? "Nothing is ready to assess." : null)}
-          onConfirm={() => startAssessment(ready!.tech_ids)} />
+          onConfirm={() => assessSet("ready")} />
       </div>
 
       {runs && (
@@ -129,15 +129,16 @@ export default function AssessmentsPage() {
               {(r.status === "running" || r.status === "terminating") && r.stage && (
                 <span className="font-mono text-[11px]">{stageWord(r.stage)}</span>
               )}
+              {/* named the same way as its own page: when, and how many */}
               <span className="min-w-0 flex-1 truncate text-sm">
-                {r.technologies.length <= 3
+                <span className="font-medium">{formatAt(r.started_at)} · {plural(r.progress.techs_total, "technology", "technologies")}</span>
+                <span className="text-muted">{" "}({r.technologies.length <= 3
                   ? r.technologies.map((t) => label(t.name)).join(", ")
-                  : `${r.technologies.slice(0, 3).map((t) => label(t.name)).join(", ")} and ${(r.technologies.length - 3).toLocaleString()} more`}
+                  : `${r.technologies.slice(0, 3).map((t) => label(t.name)).join(", ")} and ${(r.technologies.length - 3).toLocaleString()} more`})</span>
               </span>
               <span className="text-xs tabular-nums text-neutral-600">
-                {r.progress.techs_done} of {plural(r.progress.techs_total, "technology", "technologies")} ·{" "}
-                {plural(r.progress.llm_calls, "model call")}
-                {r.finished_at ? ` · finished ${formatAt(r.finished_at)}` : ` · started ${formatAt(r.started_at)}`}
+                {r.progress.techs_done} done · {plural(r.progress.llm_calls, "model call")}
+                {r.finished_at ? ` · finished ${formatAt(r.finished_at)}` : ""}
               </span>
             </Link>
           ))}

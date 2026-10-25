@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import FabricLabel from "@/components/FabricLabel";
+import { Derivation, Scores } from "@/components/PovScores";
 import PovValue, { type Fab } from "@/components/PovValue";
 import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
 import { ApiError, fetchJson } from "@/lib/api";
@@ -10,13 +11,13 @@ import { renderCitations, renderRefs, SourceNumbers, sourceNumbers } from "@/lib
 import { type Classification, type Source as ClassSource, SOURCE_WORDS, sourceWords, VERDICT_WORDS } from "@/lib/classification";
 import { formatDate, formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
-import { type Axis, AXIS_MEANING, formatScore, HORIZON_TERM, LEGEND, PRIORITY_LEGEND, weightShare } from "@/lib/scoring";
-import { scoreShade } from "@/lib/theme";
+import { type Axis, HORIZON_TERM, LEGEND, PRIORITY_LEGEND, SCORE_NAMES } from "@/lib/scoring";
+import { heading } from "@/lib/theme";
 import { type Finance, FINANCE_SHOWN, figureText } from "@/lib/value";
 
 // A Point of View as the analysts' page and the leaders' Frontier both show
 // it, the same apart from the admins' controls (PovBody): the verdict, the four
-// answers, the recommendation and the use cases, fabric by fabric, first; the
+// answers, what the technology is (for a reader new to it), the recommendation and the use cases, fabric by fabric, first; the
 // rest folded, each fold saying what it holds. Every "[n]" on the page, in
 // the text and beside it, is a number in its one list of sources, which the
 // backend builds.
@@ -59,6 +60,7 @@ export type PovFabric = {
   path_step_order?: number | null; // the step's number, of path_steps
   path_steps?: number;
   figures_from?: { name: string | null; order: number | null }; // the step from which finance figures are asked
+  placement?: { how_soon: number | null; how_big: number | null; big_band: string | null }; // leaders': as the edition holds it
   finance: Pick<Finance, "needed" | "contribution" | "payback" | "break_even" | "missing">
     & { bottlenecks?: Finance["bottlenecks"]; next_step?: Finance["next_step"] };
 };
@@ -75,6 +77,7 @@ export type Pov = {
   not_assessed_in?: string[]; // fabrics judged not relevant before scoring
   sections: {
     headline?: string | null;
+    background?: string | null; // from general knowledge, for a reader new to it (version 11 of the skill on)
     summary?: string | null;
     tora_analysis?: Record<string, string | null | undefined> | null; // by axis (AXIS_LABELS)
     other_measures?: string | null;
@@ -97,19 +100,18 @@ export type Pov = {
     evidence: (NonNullable<Classification["evidence"]> & Refs) | null;
   };
   fabrics?: PovFabric[];
+  /** The market figure the assessment rests on, as a band (null band: no page gave one;
+   *  null: assessed before figures were asked) */
+  market_size?: (Refs & { band: string | null; amount_usd_bn?: number; year?: number | string | null;
+    scope?: string | null; url?: string }) | null;
   measures?: MeasureMeta[]; // the run's own, for their names
   watch_metrics?: WatchMetric[];
   latest_assessment?: { scoring_run_id: string; fabric_ids: string[]; assessed_at: string } | null; // what PovValue shows
   value?: Fab[]; // an edition's frozen copy of where the value lands (the leaders' view); else PovValue fetches it
 };
 
-export const AXIS_LABELS: Record<string, string> = {
-  market_potential: "Market Potential",
-  strategic_fit: "Strategic Fit",
-  adoption_readiness: "Adoption Readiness",
-};
+const AXIS_LABELS = SCORE_NAMES; // the three scores (a measure scored alongside them isn't one)
 
-export const heading = "font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500";
 
 /** A run's Point of View of a technology, or null when none is written yet. */
 export const fetchPov = (run: string, tech: string) =>
@@ -129,7 +131,8 @@ export function Section({ title, covers, text, sources = [] }: {
         <h2 className={heading}>{title}</h2>
         {covers && <p className="mt-1 text-xs text-neutral-500">{covers}</p>}
       </div>
-      <p className="mt-1.5 text-[15px] leading-relaxed text-neutral-800">{renderCitations(text, sources)}</p>
+      <p className="mt-1.5 text-[15px] leading-relaxed text-neutral-800">
+        {renderCitations(text, sources)}</p>
     </section>
   );
 }
@@ -198,8 +201,11 @@ function Fold({ title, hint, className = "", children }: {
   return (
     <details className={`pov-fold group/fold rounded-card border border-line bg-white print:rounded-none print:border-0 print:[&:not([open])]:hidden ${className}`}>
       <summary className="flex cursor-pointer list-none flex-wrap items-baseline gap-x-2 px-4 py-2.5 hover:bg-ground [&::-webkit-details-marker]:hidden print:px-0">
-        <span aria-hidden className="inline-block text-[9px] text-muted transition-transform group-open/fold:rotate-90 print:hidden">▶</span>
-        <span className="text-sm font-medium text-ink">{title}</span>
+        {/* the arrow inside the title, so a long title never leaves it alone on a line */}
+        <span className="text-sm font-medium text-ink">
+          <span aria-hidden className="mr-2 inline-block text-[9px] text-muted transition-transform group-open/fold:rotate-90 print:hidden">▶</span>
+          {title}
+        </span>
         {hint && <span className="text-xs text-muted print:hidden">{hint}</span>}
       </summary>
       <div className="space-y-6 border-t border-line px-4 py-4 print:border-0 print:px-0">{children}</div>
@@ -223,11 +229,12 @@ type Answered = Refs & Radar & { source: ClassSource; imported?: string | null; 
 
 /** Where an answer came from, with its reason and pages. A value from Tata's
  *  list names the file, and what the radar judged when that differs. */
-function From({ a, sources }: { a: Answered; sources: Source[] }) {
+function From({ a, sources, admin }: { a: Answered; sources: Source[]; admin: boolean }) {
   const r = a.radar;
   if (a.imported) return (
     <>
-      <p className="text-muted">From the catalog ({a.imported})</p>
+      {/* leaders read whose list it is; the team, which file */}
+      <p className="text-muted">{admin ? `From the catalog (${a.imported})` : "From Tata's technology list"}</p>
       {r?.name && !r.same && (
         <p>The radar judged {r.name}, {SOURCE_WORDS[r.source]}{r.reason ? `: ${r.reason}` : ""} {renderRefs(r.refs, sources)}</p>
       )}
@@ -244,9 +251,10 @@ function From({ a, sources }: { a: Answered; sources: Source[] }) {
 /** The four answers a reader wants first: the priority (a person's, with
  *  their reason, in words), maturity, commercial availability and evidence,
  *  each with where it came from, why, and its pages. */
-function Answers({ pov }: { pov: Pov }) {
+function Answers({ pov, admin }: { pov: Pov; admin: boolean }) {
   const src = pov.sources ?? [];
   const { trl, availability: av, evidence: ev } = pov.classification ?? {};
+  const size = pov.market_size;
   // fabrics with the same priority and horizon share a line; a person's priority has its own, with their reason
   const lines = new Map<string, PovFabric[]>();
   for (const f of pov.fabrics ?? []) {
@@ -254,7 +262,7 @@ function Answers({ pov }: { pov: Pov }) {
     lines.set(key, [...(lines.get(key) ?? []), f]);
   }
   return (
-    <div className="mt-6 grid break-inside-avoid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mt-6 grid break-inside-avoid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <Card title="Priority">
         {lines.size === 0 && <p>Not set: the assessment it was written from is no longer stored.</p>}
         <ul className="space-y-1.5">
@@ -283,14 +291,22 @@ function Answers({ pov }: { pov: Pov }) {
         {trl?.level ? (
           <>
             {trl.name && <p className="text-ink">{trl.name}</p>}
-            <From a={trl} sources={src} />
+            <From a={trl} sources={src} admin={admin} />
           </>
         ) : (
           <p>What&apos;s missing: {trl?.missing || "no page shows how far it has got. A dated trial, pilot or production deployment would."}</p>
         )}
       </Card>
       <Card title="Commercial availability" value={av?.name ?? "Not known yet"}>
-        {av && <From a={av} sources={src} />}
+        {av && <From a={av} sources={src} admin={admin} />}
+      </Card>
+      <Card title="Market size" value={size?.band ?? (size ? "No figure found" : "Not assessed yet")}>
+        {size?.band ? (
+          <p>From a figure of ${size.amount_usd_bn}B{[size.scope, size.year].filter(Boolean).length > 0
+            ? ` (${[size.scope, size.year].filter(Boolean).join(", ")})` : ""} {renderRefs(size.refs, src)}</p>
+        ) : size ? <p>No page the assessment read gives a market figure.</p>
+          : <p>Shown from the technology&apos;s next assessment.</p>}
+        <p className="text-muted">A band, never a figure the radar makes up.</p>
       </Card>
       <Card title="Evidence" value={ev ? VERDICT_WORDS[ev.verdict] : "Not judged yet"}>
         {ev ? (
@@ -467,211 +483,17 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
   );
 }
 
-/** Why a fabric's scores are what they are, in a panel on the right: each
- *  measure behind them, open. On wide screens the page moves left to make
- *  room (body.side-panel); narrower, it covers the page over a dimmed
- *  backdrop. Esc, ×, or the backdrop closes it, and the page is as it was. */
-function WhyPanel({ f, meta, sources, changeHref, onClose }: {
-  f: PovFabric; meta: MeasureMeta[]; sources: Source[]; changeHref?: (fabricId: string) => string; onClose: () => void;
-}) {
-  useEffect(() => {
-    document.body.classList.add("side-panel"); // globals.css: the page's content moves left
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", esc);
-    return () => { document.body.classList.remove("side-panel"); window.removeEventListener("keydown", esc); };
-  }, [onClose]);
-  return (
-    <>
-      <div aria-hidden onClick={onClose} className="fixed inset-0 z-30 bg-ink/20 xl:hidden print:hidden" />
-      <aside role="dialog" aria-label={`Why ${f.fabric}'s scores`}
-        className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-line bg-white shadow-xl sm:w-[28rem] xl:w-[min(34rem,40vw)] print:hidden">
-        <div className="flex items-center gap-3 border-b border-neutral-200 px-4 py-3">
-          <span className="text-sm font-medium">Why these scores</span>
-          <FabricLabel id={f.fabric_id} name={f.fabric} />
-          <button type="button" onClick={onClose} autoFocus aria-label="Close"
-            className="ml-auto rounded-full px-2 text-xl leading-none text-muted hover:bg-ground hover:text-ink">×</button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto py-2">
-          <p className="px-4 pb-1 text-[12.5px] text-neutral-600">
-            Each score is the weighted mean of the measures under it that had enough evidence; the share beside a
-            measure is its weight. Each measure gives its reasoning, its pages and what argues against it.
-          </p>
-          <Derivation f={f} meta={meta} sources={sources} bare />
-          {changeHref && (
-            <Link href={changeHref(f.fabric_id)} className="mx-4 mb-2 inline-block text-[12.5px] text-link hover:underline">
-              Change a score or the priority, on the technology&apos;s page →
-            </Link>
-          )}
-        </div>
-      </aside>
-    </>
-  );
-}
-
-/** The three scores per fabric, out of 10, each with how many of its
- *  measures had evidence, and the priority and horizon (and whether a person
- *  set it). Why opens the measures each score was worked out from in a panel
- *  on the right; the note says what each score asks. On a phone each fabric
- *  stacks, its cells labelled. `changeHref`: the admins' link to change a
- *  score or the priority on the technology's page. */
-function Scores({ pov, changeHref }: { pov: Pov; changeHref?: (fabricId: string) => string }) {
-  const notIn = pov.not_assessed_in ?? [];
-  const meta = pov.measures ?? [];
-  const [why, setWhy] = useState<string | null>(null);
-  const before = useRef(0); // where the page was before the panel opened, to go back to on close
-  const open = (id: string) => { if (!why) before.current = window.scrollY; setWhy(id); };
-  const close = useCallback(() => {
-    setWhy(null);
-    requestAnimationFrame(() => window.scrollTo(0, before.current));
-  }, []);
-  // the page narrows while the panel is open, and the scores may move: keep the chosen row in view
-  useEffect(() => {
-    if (why) document.querySelector(`[data-why="${why}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [why]);
-  const shown = (pov.fabrics ?? []).find((f) => f.fabric_id === why);
-  const axes = Object.keys(AXIS_MEANING);
-  const grid = "grid grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))_minmax(0,1.1fr)_3.5rem] sm:items-start";
-  const label = "block text-[11px] text-muted sm:hidden";
-  return (
-    <section className="break-inside-avoid">
-      <h2 className={heading}>Scores</h2>
-      <div className="mt-2 rounded-card border border-line bg-white text-sm">
-        <div className={`${grid} hidden border-b border-neutral-200 px-3 py-2 font-mono text-[10.5px] uppercase tracking-wider text-neutral-500 sm:grid`}>
-          <span>Fabric</span>
-          {axes.map((k) => <span key={k} className="text-right">{AXIS_LABELS[k]}</span>)}
-          <span className="text-right">Priority</span>
-          <span />
-        </div>
-        {(pov.fabrics ?? []).map((f) => (
-          <div key={f.fabric_id} className="score-row border-b border-neutral-100 last:border-b-0">
-            <button type="button" data-why={f.fabric_id} onClick={() => (why === f.fabric_id ? close() : open(f.fabric_id))}
-              aria-pressed={why === f.fabric_id}
-              className={`${grid} w-full px-3 py-2.5 text-left hover:bg-ground/60 ${why === f.fabric_id ? "bg-azure/10" : ""}`}
-              title={`Why ${f.fabric}'s scores: the measures behind them`}>
-              <span className="col-span-2 sm:col-span-1"><FabricLabel id={f.fabric_id} name={f.fabric} /></span>
-              <span className="whitespace-nowrap text-right text-[12.5px] text-link sm:order-last print:hidden">
-                {why === f.fabric_id ? "Open ›" : "Why ›"}
-              </span>
-              {axes.map((k) => {
-                const ax = f.tora?.[k];
-                return (
-                  <span key={k} className="sm:text-right">
-                    <span className={label}>{AXIS_LABELS[k]}</span>
-                    {ax?.score != null ? (
-                      <span className={`inline-block min-w-9 px-1.5 py-0.5 text-center font-mono text-xs tabular-nums ${scoreShade(ax.score)}`}>
-                        {formatScore(ax.score)}
-                      </span>
-                    ) : <span className="text-xs text-muted">no score</span>}
-                    {ax?.of ? <span className="mt-0.5 block text-[11px] text-muted">{ax.scored ?? 0} of {ax.of}</span> : null}
-                  </span>
-                );
-              })}
-              <span className="col-span-3 sm:col-span-1 sm:text-right">
-                <span className={label}>Priority</span>
-                <span className="font-mono text-xs">{f.priority ?? <span className="font-sans text-muted">not set</span>}</span>
-                {f.horizon && <span className="block text-[11px] text-muted">{f.horizon}, {HORIZON_TERM[f.horizon] ?? ""}</span>}
-                {f.override && <span className="block text-[11px] text-amber-900">set by a person</span>}
-              </span>
-            </button>
-          </div>
-        ))}
-      </div>
-      {shown && <WhyPanel f={shown} meta={meta} sources={pov.sources ?? []} changeHref={changeHref} onClose={close} />}
-      {notIn.length > 0 && (
-        <p className="mt-1.5 text-xs text-neutral-600">
-          Not assessed in {notIn.join(", ")}: judged not relevant to this technology before scoring.
-        </p>
-      )}
-      <ul className="mt-1.5 space-y-0.5 text-xs text-neutral-600">
-        {axes.map((k) => {
-          const names = meta.filter((m) => m.axis === k).sort((x, y) => x.code.localeCompare(y.code)).map((m) => m.name);
-          return <li key={k}><b className="font-medium">{AXIS_LABELS[k]}</b>: {AXIS_MEANING[k]}{names.length > 0 && `, from ${names.join(", ")}`}.</li>;
-        })}
-        <li>Each out of 10, darker when higher; &ldquo;2 of 3&rdquo;: measures with enough evidence. Why opens them.</li>
-      </ul>
-    </section>
-  );
-}
-
-/** Why a measure has the score it has, in words: the assessor's
- *  justification with its pages, or a person's score or accepted gap with
- *  their reason, or what evidence would settle it. */
-function MeasureWhy({ m, sources }: { m: PovMeasure; sources: Source[] }) {
-  switch (m.state) {
-    case "scored_by_person":
-      return <>Scored by a person{m.model_score != null ? ` (the model gave ${formatScore(m.model_score)})` : ""}. Their reason: {m.reason ?? "none recorded"}</>;
-    case "gap_accepted":
-      return <>Couldn&apos;t be assessed from the evidence, and a person accepted the gap. Would need: {m.missing ?? "not recorded"}</>;
-    case "waiting_for_tata":
-      return <>Waiting for Tata: Tata Communications enters this measure; it isn&apos;t scored from the pages.</>;
-    case "unscored":
-      return <><span className="italic text-neutral-500">Not enough evidence. Would need: </span>{m.missing ?? "not recorded"}</>;
-    default:
-      return <>{m.justification} {renderRefs(m.refs, sources)}</>;
-  }
-}
-
-/** One fabric's scores worked out: each score with the measures it was
- *  computed from, each measure's reasoning and the pages behind it. `bare`:
- *  inside a Scores row, without its own card, every measure's reason open. */
-function Derivation({ f, meta, sources, bare = false }: { f: PovFabric; meta: MeasureMeta[]; sources: Source[]; bare?: boolean }) {
-  const axes = [...Object.keys(AXIS_LABELS), ...meta.map((m) => m.axis)].filter((ax, i, all) => all.indexOf(ax) === i);
-  return (
-    <div className={bare ? "" : "rounded-card border border-line bg-white print:rounded-none print:border-0"}>
-      {!bare && <div className="break-after-avoid border-b border-neutral-200 px-4 py-2"><FabricLabel id={f.fabric_id} name={f.fabric} /></div>}
-      {axes.map((axis) => {
-        const measures = meta.filter((m) => m.axis === axis && f.measures[m._id]).sort((x, y) => x.code.localeCompare(y.code));
-        if (measures.length === 0) return null;
-        const roll = f.tora?.[axis];
-        return (
-          <div key={axis} className="border-b border-neutral-100 px-4 py-3 last:border-b-0">
-            <div className="flex break-after-avoid items-baseline gap-2">
-              <span className="text-sm font-medium">{AXIS_LABELS[axis] ?? "Other measures"}</span>
-              {roll && (
-                <>
-                  <span className={`px-1.5 py-0.5 font-mono text-xs tabular-nums ${scoreShade(roll.score)}`}>
-                    {roll.score != null ? formatScore(roll.score) : "no score"}
-                  </span>
-                  <span className="font-mono text-[11px] text-neutral-500">weighted mean · {roll.scored} of {roll.of} measures scored</span>
-                </>
-              )}
-            </div>
-            <div className="mt-2 space-y-1">
-              {measures.map((m) => {
-                const r = f.measures[m._id];
-                return (
-                  <details key={m._id} className="group" open={bare}>
-                    <summary className="flex cursor-pointer list-none items-baseline gap-2 py-0.5 text-sm hover:text-black">
-                      <span className="text-neutral-400 transition-transform group-open:rotate-90">›</span>
-                      <span className="min-w-0 flex-1 truncate text-neutral-700">{m.name}</span>
-                      {(m.weight ?? 0) > 0 && <span className="font-mono text-[11px] text-neutral-400">{weightShare(m.weight)}</span>}
-                      <span className={`px-1.5 py-0.5 font-mono text-xs tabular-nums ${scoreShade(r.score)}`}>
-                        {r.score != null ? formatScore(r.score) : "no score"}
-                      </span>
-                    </summary>
-                    <div className="mb-2 ml-4 border-l-2 border-neutral-200 pl-3 text-sm leading-relaxed text-neutral-600">
-                      <MeasureWhy m={r} sources={sources} />
-                      {r.counter_case && <p className="mt-1 italic text-neutral-500">What argues against it: {r.counter_case}</p>}
-                    </div>
-                  </details>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /** "How to read this page", the same on both addresses; `admin` adds the
  *  admins' links and Rewrite. */
 export function PovHelp({ admin = false }: { admin?: boolean }) {
   return (
     <>
-      <li>First, the verdict and four answers: the priority in each fabric (P1 act now to P6 just watch, with the
-        horizon, near to far), the maturity (TRL, 1 to 9), the commercial availability and how solid the evidence is.
+      <li>First, the verdict and five answers: the priority in each fabric (P1 act now to P6 just watch, with the
+        horizon, near to far), the maturity (TRL, 1 to 9), the commercial availability, the market size as a band
+        (under $1B, $1–5B, $5–20B, $20–100B, over $100B) from the figure on a named page, and how solid the evidence is.
         A priority a person set says so, with their reason and the priority the scores give.</li>
+      <li>About this technology, for readers new to it: what it is, where it came from and how it has evolved. It
+        comes from general knowledge, not the pages reviewed, so it cites none.</li>
       <li>Then the recommendation, and the use cases in a table: per fabric, each use case with the investment it
         needs and why, and how far Tata has got on its path to scale{FINANCE_SHOWN ? <>, and whether it pays, from
         Tata&apos;s own figures</> : ""}. The note under the table says what {FINANCE_SHOWN ? "those mean" : "that means"} and
@@ -680,7 +502,7 @@ export function PovHelp({ admin = false }: { admin?: boolean }) {
         missing, the score detail in words, and the sources.</li>
       <li>A number in brackets, like [3], is a source: click it to open the page. It&apos;s the same number everywhere
         on the page, and Sources lists them all.</li>
-      <li>Scores: per fabric, Market Potential, Strategic Fit and Adoption Readiness, each out of 10 (darker is
+      <li>Scores: per fabric, Market potential, Strategic fit and Adoption readiness, each out of 10 (darker is
         higher), with how many of its measures had enough evidence (2 of 3; with none there&apos;s no score, which isn&apos;t
         a zero). {LEGEND} Why, on a fabric&apos;s row, opens a panel
         on the right with the measures behind its scores: each measure&apos;s score, the reasoning and its pages. Close it
@@ -702,7 +524,7 @@ export function PovHelp({ admin = false }: { admin?: boolean }) {
  *  finance card) and their notes (a citation to check, a rewrite to bring
  *  the text up to date). Printing opens every fold but the score detail,
  *  which prints, every measure open, when it's open. */
-export function PovBody({ pov, admin = false }: { pov: Pov; admin?: boolean }) {
+export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?: boolean; afterAnswers?: ReactNode }) {
   const here = useHere();
   const s = pov.sections ?? {};
   const src = pov.sources ?? [];
@@ -746,7 +568,15 @@ export function PovBody({ pov, admin = false }: { pov: Pov; admin?: boolean }) {
         <p className="mt-3 text-sm text-amber-900 print:hidden">Check before sharing: it {pov.citation_problems}. Rewriting usually fixes it.</p>
       )}
 
-      <Answers pov={pov} />
+      <Answers pov={pov} admin={admin} />
+      {afterAnswers}
+
+      {s.background && (
+        <div className="mt-8">
+          <Section title="About this technology" text={s.background} sources={src}
+            covers="For readers new to it: what it is, where it came from, how it has evolved. From general knowledge, not the pages reviewed." />
+        </div>
+      )}
 
       {/* the recommendation and the scores side by side when their space is wide enough (it narrows while the
           Why panel is open); one column otherwise and in print */}
@@ -786,10 +616,10 @@ export function PovBody({ pov, admin = false }: { pov: Pov; admin?: boolean }) {
               {watch.length > 0 && (
                 <section>
                   <div className="break-inside-avoid break-after-avoid">
-                    <h2 className={heading}>Metrics to watch</h2>
+                    <h2 className={heading}>Signs to watch</h2>
                     <p className="mt-1 text-xs text-neutral-500">
-                      What would change the verdict, suggested by the assessment. Nothing tracks them automatically: the
-                      next assessment checks them.
+                      What would change the verdict, suggested by the assessment. The next assessment checks each
+                      against new pages and marks the ones that crossed their threshold.
                     </p>
                   </div>
                   <div className="mt-2"><WatchMetrics metrics={watch} /></div>

@@ -47,8 +47,8 @@ export default function ScoringOverview() {
         help={<>
         <li>An assessment scores each technology in each fabric it touches (Tata Communications&apos; business
           areas) on twelve measures, from 0 to 10, each backed by collected evidence.</li>
-        <li>Nine of them average into the three scores: Market Potential (how big), Strategic Fit (how well it
-          fits) and Adoption Readiness (how ready). The percentage is each measure&apos;s share of its score.</li>
+        <li>Nine of them average into the three scores: Market potential (how big), Strategic fit (how well it
+          fits) and Adoption readiness (how ready). The percentage is each measure&apos;s share of its score.</li>
         <li>Some of the same scores also place it on the priority grid, from P1 act now to P6 just watch, and give
           its horizon, from H1 near to H3 far. Weights &amp; Grid shows how.</li>
         <li>Open questions are decisions still waiting on Tata&apos;s answer; clear one once it&apos;s

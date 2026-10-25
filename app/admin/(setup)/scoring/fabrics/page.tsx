@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import FabricLabel from "@/components/FabricLabel";
@@ -63,7 +64,10 @@ export default function FabricsPage() {
     <div>
       <PageHeader title="Fabrics"
         intro={<>Tata Communications&apos; business areas, as its Digital Fabric names them. A technology is scored in
-          each one judged relevant to it.</>}
+          each one judged relevant to it. Not the same as{" "}
+          <Link href="/admin/classification/domains" className="text-link hover:underline">domains</Link>: a domain files a
+          technology by subject, for browsing; a fabric is a business line it&apos;s scored and prioritised in. A
+          cybersecurity technology can be scored in both Security and Network.</>}
         help={<>
         <li>A technology is scored separately in each fabric it touches; one model call picks which ones at the
           start of each assessment.</li>

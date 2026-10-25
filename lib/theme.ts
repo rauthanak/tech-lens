@@ -6,14 +6,19 @@ export const LIVE_DOT = "inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded
 
 /** Status chips: azure while running, grey once over, red only for failures.
  * StatusChip puts LIVE_DOT before a live status and `mark` before the others. */
-export const STATUS: Record<string, { style: string; live?: boolean; mark?: string }> = {
-  running: { style: "bg-azure/10 text-ink", live: true },
-  terminating: { style: "bg-azure/10 text-ink", live: true },
-  completed: { style: "bg-neutral-100 text-muted", mark: "✓" },
-  failed: { style: "bg-failed/10 text-failed" },
-  terminated: { style: "bg-neutral-100 text-muted" },
-  interrupted: { style: "bg-neutral-100 text-muted" },
-  incomplete: { style: "bg-neutral-100 text-ink", mark: "◐" }, // didn't finish
+export const STATUS: Record<string, { style: string; live?: boolean; mark?: string; word?: string }> = {
+  running: { style: "bg-azure/10 text-ink", live: true, word: "Running" },
+  terminating: { style: "bg-azure/10 text-ink", live: true, word: "Stopping" },
+  completed: { style: "bg-neutral-100 text-muted", mark: "✓", word: "Done" },
+  failed: { style: "bg-failed/10 text-failed", word: "Failed" },
+  terminated: { style: "bg-neutral-100 text-muted", word: "Stopped" },
+  stopped: { style: "bg-neutral-100 text-muted", word: "Stopped" },
+  interrupted: { style: "bg-neutral-100 text-muted", word: "Interrupted" },
+  incomplete: { style: "bg-neutral-100 text-ink", mark: "◐", word: "Not finished" }, // didn't finish
+  confirmed: { style: "bg-neutral-100 text-muted", mark: "✓", word: "Confirmed" },
+  discarded: { style: "bg-neutral-100 text-muted", word: "Discarded" },
+  reviewing: { style: "bg-azure/10 text-ink", word: "To review" },
+  ready: { style: "bg-azure/10 text-ink", word: "Ready to confirm" },
 };
 
 /** P1–P6 on a navy ramp, darkest for the most urgent; white text on the first three. */
@@ -50,3 +55,6 @@ export const FABRIC: Record<string, string> = {
   interaction: "bg-interaction",
   media: "bg-media",
 };
+
+/** A section's small capital heading (a Point of View's parts, the leaders' commitments). */
+export const heading = "font-mono text-[11px] uppercase tracking-[0.25em] text-neutral-500";

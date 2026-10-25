@@ -6,6 +6,8 @@ import BackendError from "@/components/BackendError";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { chipStyle, hostOf, makeSignalHref, type OtherGroup } from "@/lib/signals";
+import Pager from "@/components/Pager";
+import { useStoredStart } from "@/lib/paging";
 
 const lightBtn = "rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-ground";
 const DAYS = 30;
@@ -22,13 +24,14 @@ export default function SignalSuggestions() {
     return fetchJson<{ groups: OtherGroup[]; total: number }>(`/api/signals/other?since=${since}&limit=20&skip=${skip}`);
   };
 
+  const [start, setStart] = useStoredStart("suggestions"); // 20 at a time, kept when you come back
   useEffect(() => {
     let current = true;
-    fetchGroups(0)
+    fetchGroups(start)
       .then((d) => { if (current) { setGroups(d.groups); setTotal(d.total); } })
       .catch((e) => { if (current) setError(e); });
     return () => { current = false; };
-  }, []);
+  }, [start]);
 
   return (
     <section id="suggestions" className="mt-10 scroll-mt-20">
@@ -62,13 +65,7 @@ export default function SignalSuggestions() {
           </div>
         ))}
       </div>
-      {groups && groups.length < total && (
-        <button type="button" className={`${lightBtn} mt-3`}
-          onClick={() => fetchGroups(groups.length)
-            .then((d) => { setGroups([...groups, ...d.groups]); setTotal(d.total); }).catch(setError)}>
-          Show more
-        </button>
-      )}
+      {groups && <Pager className="mt-3" start={start} total={total} size={20} go={setStart} what="suggestions" />}
     </section>
   );
 }

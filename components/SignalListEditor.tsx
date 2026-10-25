@@ -33,6 +33,9 @@ export default function SignalListEditor() {
   const router = useRouter();
   const pathname = usePathname();
   const [rows, setRows] = useState<SignalRow[] | null>(null);
+  const [pages, setPages] = useState<{ checkable: number; stale: number } | null>(null);
+  const [asking, setAsking] = useState<string | null>(null); // the row whose switch waits for a yes
+  const [savedRow, setSavedRow] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -52,7 +55,11 @@ export default function SignalListEditor() {
   }
 
   const load = useCallback(() => {
-    fetchJson<SignalsResponse>("/api/signals").then((d) => { setRows(d.signals); setError(null); }).catch(setError);
+    fetchJson<SignalsResponse>("/api/signals").then((d) => {
+      setRows(d.signals);
+      setPages({ checkable: d.checkable_pages, stale: d.stale_pages });
+      setError(null);
+    }).catch(setError);
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -77,7 +84,10 @@ export default function SignalListEditor() {
     try {
       await sendJson(`/api/signals/${row._id}`, "PUT",
         { name: row.name, look_for: row.look_for, mode: row.mode, enabled: !row.enabled });
+      setAsking(null);
       changed();
+      setSaved(false);
+      setSavedRow(row._id);
     } catch (e) {
       setSaved(false);
       setNotice(reason(e));
@@ -137,7 +147,8 @@ export default function SignalListEditor() {
                       </span>
                     )}
                     <button type="button" role="switch" aria-checked={r.enabled} aria-label={r.name}
-                      onClick={() => toggle(r)} title={r.enabled ? "On: switch off to pause" : "Off: switch on"}
+                      onClick={() => { setSavedRow(null); setAsking(asking === r._id ? null : r._id); }}
+                      title={r.enabled ? "On: switch off to pause" : "Off: switch on"}
                       className={`relative h-4 w-7 shrink-0 rounded-full ${r.enabled ? "bg-azure" : "bg-neutral-300"}`}>
                       <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white ${r.enabled ? "left-3.5" : "left-0.5"}`} />
                     </button>
@@ -154,6 +165,10 @@ export default function SignalListEditor() {
                       onClick={() => open({ id: r._id, name: r.name, look_for: r.look_for, mode: r.mode, enabled: r.enabled })}>
                       Edit
                     </button>
+                    {savedRow === r._id && <span className="basis-full"><SavedNote show what="Applies from the next collection." /></span>}
+                    {asking === r._id && (
+                      <SwitchQuestion row={r} pages={pages} onYes={() => toggle(r)} onNo={() => setAsking(null)} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -170,6 +185,30 @@ export default function SignalListEditor() {
             onDelete={draft.id ? () => remove(draft.id!) : undefined} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** The question a switch asks first: what it marks, and what checking those pages again costs. */
+function SwitchQuestion({ row, pages, onYes, onNo }: { row: SignalRow; pages: { checkable: number; stale: number } | null;
+  onYes: () => void; onNo: () => void }) {
+  const n = pages?.checkable ?? 0;
+  const already = pages != null && pages.stale >= n;
+  return (
+    <div role="group" aria-label={`Switch ${row.name} ${row.enabled ? "off" : "on"}?`}
+      className="basis-full rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-950">
+      <p>
+        {row.enabled ? "Switch off" : "Switch on"} “{row.name}”? It applies from the next collection.{" "}
+        {pages == null ? "Stored pages are marked as not yet checked."
+          : n === 0 ? "No stored pages to mark."
+            : already ? `All ${n.toLocaleString()} stored pages are already marked as not yet checked; this adds none.`
+              : `It marks ${plural(n, "stored page")} as not yet checked: about ${plural(n, "model call")} when you run Check again on Operations.`}
+      </p>
+      <p className="mt-1.5 flex items-center gap-3">
+        <button type="button" onClick={onYes} className="rounded-full bg-navy px-3 py-1 text-white">
+          {row.enabled ? "Switch off" : "Switch on"}</button>
+        <button type="button" onClick={onNo} className="text-muted hover:text-ink">Cancel</button>
+      </p>
     </div>
   );
 }

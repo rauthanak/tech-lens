@@ -24,6 +24,17 @@ function PointOfView() {
   const [missing, setMissing] = useState<string | null>(null); // why the edition has none
   const [error, setError] = useState<unknown>(null);
 
+  // how often leaders open and print it (counted here, on the leaders' address, only)
+  useEffect(() => {
+    const seen = (kind: "opened" | "printed") =>
+      fetch(`/api/frontier/pov/${encodeURIComponent(tech)}/seen`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }) }).catch(() => {});
+    seen("opened");
+    const printed = () => seen("printed");
+    window.addEventListener("beforeprint", printed);
+    return () => window.removeEventListener("beforeprint", printed);
+  }, [tech]);
+
   useEffect(() => {
     fetchEditionPov(tech).then((r) => { setPov(r.pov); setMissing(r.missing); setError(null); }).catch(setError);
   }, [tech]);
@@ -56,8 +67,8 @@ function PointOfView() {
       )}
       {!pov && !missing && error == null && <p className="mt-6 text-sm text-muted">Loading…</p>}
 
-      {pov && <PovLeader fabrics={pov.fabrics ?? []} />}
-      {pov && <PovBody pov={pov as Pov} />}
+      {/* the answer first; what Tata has committed after the five answers */}
+      {pov && <PovBody pov={pov as Pov} afterAnswers={<PovLeader fabrics={pov.fabrics ?? []} />} />}
     </div>
   );
 }

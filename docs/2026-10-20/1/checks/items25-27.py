@@ -68,9 +68,10 @@ with sync_playwright() as p:
         pg.goto(f"{BASE}/admin/operations")
         settle(pg, 3000)
         main = pg.inner_text("main")
-        steps = re.findall(r"(\d) · (Collect|Signals|Organize|Classify|Assess|Points of View)", main, re.I)
-        check([n for n, _ in steps] == ["1", "2", "3", "4", "5", "6"], f"Operations: the six steps numbered in order ({steps})")
-        check(all(w in main for w in ("You start it", "Runs by itself", "Waits for you")),
+        # change 37 made the six cards the latest run's six steps (item37.py checks them in full)
+        steps = pg.locator("section[aria-label='Steps of this run'] li h3").all_inner_texts()
+        check(len(steps) == 6 and steps[0].startswith("Collect"), f"Operations: the six steps in order ({steps})")
+        check(all(w in main for w in ("You start it", "Runs by itself")),
               "Operations: each step says who moves it on")
         check(pg.get_by_role("link", name="Collections", exact=True).count() >= 1
               and pg.get_by_role("link", name="Assessment runs", exact=True).count() >= 1, "Operations: tabs to its two lists")

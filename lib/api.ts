@@ -48,7 +48,8 @@ export function browserTz(): string {
   }
 }
 
-export const fetchJson = <T>(url: string) => request<T>(url);
+/** GET; `signal` lets a newer request cancel this one (its answer is then dropped). */
+export const fetchJson = <T>(url: string, init?: { signal?: AbortSignal }) => request<T>(url, init);
 
 export const sendJson = <T>(url: string, method: "POST" | "PUT" | "DELETE", body?: unknown) =>
   request<T>(url, { method, headers: { "Content-Type": "application/json", "X-Time-Zone": browserTz() },

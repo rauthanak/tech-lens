@@ -17,12 +17,13 @@ const provenance = (a: object) => {
  *  domain and evidence — each with where it came from, "Why?" and "Change"
  *  (evidence can't be changed: it's the model's verdict on its pages); and
  *  above them, a possible-nascent flag for a person to confirm. */
-export default function TechAnswers({ techId, c, cited, status, onChanged }: {
+export default function TechAnswers({ techId, c, cited, status, onChanged, narrow }: {
   techId: string;
   c: Classification;
   cited: Record<string, CitedPage>;
   status?: Status;
   onChanged: () => void;
+  narrow?: boolean; // in a side column at 1280 px and wider: one card under another
 }) {
   const undoable = (decisionId: string | null | undefined) => decisionId ? (
     <ActButton label="Undo" title="Go back to what the radar judged" run={() => undo(decisionId)} onDone={onChanged} />
@@ -35,7 +36,8 @@ export default function TechAnswers({ techId, c, cited, status, onChanged }: {
             tracked={status === "placed" || status === "held"} thin={status === "thin"} onChanged={onChanged} />
         </div>
       )}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* each card as tall as what it says: no blank space at the bottom of the shorter ones */}
+      <div className={`grid grid-cols-1 items-start gap-3 sm:grid-cols-2 ${narrow ? "min-[1280px]:grid-cols-1" : "xl:grid-cols-4"}`}>
         <AnswerCard label="Commercial availability" value={c.availability.name} source={c.availability.source}
           at={c.availability.at} tz={c.availability.tz} reason={c.availability.reason} pages={c.availability.pages} cited={cited}
           {...provenance(c.availability)}

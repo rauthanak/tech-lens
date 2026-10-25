@@ -16,12 +16,12 @@ import LeaderRecord from "@/components/LeaderRecord";
 import PathToScale from "@/components/PathToScale";
 import Section, { type PartState } from "@/components/Section";
 import UseCases from "@/components/UseCases";
-import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
+import WatchMetrics, { SIGNS_EXPLAINED, type WatchMetric } from "@/components/WatchMetrics";
 import { fetchJson } from "@/lib/api";
 import { decide, type Decision } from "@/lib/decisions";
 import { orList, plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
-import { AXIS_MEANING, formatScore, HORIZON_TERM, noPriorityReason, type Placement, PRIORITY_LEGEND } from "@/lib/scoring";
+import { AXIS_MEANING, formatScore, HORIZON_TERM, noPriorityReason, type Placement, PRIORITY_LEGEND, SCORE_NAMES } from "@/lib/scoring";
 import { LEADER_STATES } from "@/components/frontier/items";
 import { beforePublishing, type FabricOpen, toSettle } from "@/lib/open";
 import { PRIORITY, scoreShade } from "@/lib/theme";
@@ -86,8 +86,7 @@ function Recorded({ id, ok, label, children }: { id?: string; ok: boolean; label
 
 const PART = "mt-4 border-t border-neutral-100 pt-3 text-[13.5px] font-semibold scroll-mt-20";
 const PILL = "rounded-full border border-line bg-white px-3 py-1 text-[13px] hover:bg-ground";
-const AXES = [["market_potential", "Market potential"], ["strategic_fit", "Strategic fit"],
-  ["adoption_readiness", "Adoption readiness"]] as const;
+const AXES = Object.entries(SCORE_NAMES);
 
 const PRIZE: Record<string, string> = { high: "big", mid: "moderate", low: "small" };
 const LEADER: Record<FabricOpen["leader"], PartState> = { undefined: { tone: "open", label: "No owner yet" },
@@ -95,13 +94,15 @@ const LEADER: Record<FabricOpen["leader"], PartState> = { undefined: { tone: "op
   integrated: { tone: "done", label: "Integrated" } };
 
 /** Why the priority, as a sentence: "it arrives mid-term (how soon: 6 of 10,
- *  from 2 of 2 measures) and the prize is big (how big: 8 of 10, …)". */
-function because(horizon: string | null, t: Composite, p: Composite) {
-  const of = (c: Composite) => `${formatScore(c.score!)} of 10, from ${c.scored} of ${plural(c.of, "measure")}`;
+ *  from 2 of 2 measures) and the prize is big (how big: 8 of 10, …)".
+ *  `waiting`: how-big measures unscored because they wait for Tata's figures. */
+function because(horizon: string | null, t: Composite, p: Composite, waiting = 0) {
+  const of = (c: Composite, w = 0) => `${formatScore(c.score!)} of 10, from ${c.scored} of ${plural(c.of, "measure")}`
+    + (w > 0 ? `; ${w} ${w === 1 ? "waits" : "wait"} for your figures` : "");
   const soon = t.score == null ? "how soon it arrives isn't scored yet"
     : `it arrives ${horizon ? HORIZON_TERM[horizon] ?? horizon : t.band ?? ""} (how soon: ${of(t)})`;
   const big = p.score == null ? "how big the prize is isn't scored yet"
-    : `the prize is ${PRIZE[p.band ?? ""] ?? p.band ?? ""} (how big: ${of(p)})`;
+    : `the prize is ${PRIZE[p.band ?? ""] ?? p.band ?? ""} (how big: ${of(p, Math.min(waiting, p.of - p.scored))})`;
   return `${soon} and ${big}`;
 }
 
@@ -182,21 +183,27 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
   // what's recorded for Tata's plan: the step, an owner, the blockers, resources
   const recorded = [!!data.finance.step, !!fo?.owner, !!data.finance.bottlenecks, !!fo?.resources];
   const notAssessed = (notAssessedIn?.length ?? 0) > 0
-    && `Not assessed in ${orList(notAssessedIn!)}: judged not relevant to it before scoring.`;
+    && `Not assessed in ${orList(notAssessedIn!)}: judged not relevant to it before assessing.`;
 
   const row = ({ mid, r, m }: { mid: string; r: Result; m?: MeasureDef }) => {
     const name = m?.name ?? mid;
     const open = why[mid];
     // what a person can do when the pages don't settle it: score it by hand
-    // (or enter Tata's figure), or leave it out
-    const fill = r.state === "unscored"
-      ? { kind: "hand_score" as const, openLabel: "Score by hand", skipLabel: "Accept the gap",
+    // (or enter Tata's figure), or leave it out; a score the model gave can
+    // be replaced by a person's too, the model's staying beside it
+    const fill: { kind: "hand_score" | "tata_entry"; openLabel: string; skipLabel: string | null; label: string;
+      placeholder: string } | null = r.state === "unscored"
+      ? { kind: "hand_score", openLabel: "Score by hand", skipLabel: "Accept the gap",
         label: r.scope === "technology" ? "Score, 0–10 (applies in every fabric)" : "Score, 0–10",
         placeholder: "what you know that the pages don't show" }
-      : r.state === "waiting_for_tata"
-        ? { kind: "tata_entry" as const, openLabel: "Enter", skipLabel: "Leave it out", label: "Your figure, 0–10",
-          placeholder: "where the figure comes from" }
-        : null;
+      : r.state === "scored"
+        ? { kind: "hand_score", openLabel: "Score by hand", skipLabel: null,
+          label: r.scope === "technology" ? "Your score, 0–10 (applies in every fabric)" : "Your score, 0–10",
+          placeholder: `why it should differ from the model's ${r.score}` }
+        : r.state === "waiting_for_tata"
+          ? { kind: "tata_entry", openLabel: "Enter", skipLabel: "Leave it out", label: "Your figure, 0–10",
+            placeholder: "where the figure comes from" }
+          : null;
     return (
       <li key={mid} className="py-3">
         <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
@@ -259,8 +266,10 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
             {fill && form !== mid && (
               <>
                 <button type="button" onClick={() => setForm(mid)} className={PILL}>{fill.openLabel}</button>
-                <ActButton label={fill.skipLabel} className={PILL} onDone={done}
-                  run={() => decide({ kind: "accept_gap", tech_id: techId, fabric_id: a.fabric_id, measure_id: mid })} />
+                {fill.skipLabel && (
+                  <ActButton label={fill.skipLabel} className={PILL} onDone={done}
+                    run={() => decide({ kind: "accept_gap", tech_id: techId, fabric_id: a.fabric_id, measure_id: mid })} />
+                )}
                 {r.state === "unscored" && (
                   <>
                     <FindEvidence gap={{ kind: "measure", tech_id: techId, fabric_id: a.fabric_id, measure_id: mid }} onDone={done} />
@@ -279,7 +288,7 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
     <div className="mt-3">
       {/* the fabric bar stays in view while the parts below scroll */}
       <div className="sticky top-0 z-20 -mx-2 flex flex-col gap-1 bg-ground/95 px-2 py-2 backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
-      <nav aria-label="Fabrics" className="flex gap-1.5 overflow-x-auto sm:flex-wrap">
+      <nav aria-label="Fabrics" className="flex flex-wrap gap-1.5">
         {data.fabrics.map((f) => {
           const on = f.fabric_id === a.fabric_id;
           const mine = open?.find((o) => o.fabric_id === f.fabric_id) ?? {
@@ -333,10 +342,12 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
         {(e.override ? e.computed_priority : e.priority) && (
           <p className="mt-2 text-[13.5px] text-neutral-800">
             <b>{e.override ? `Computed ${e.computed_priority}` : e.priority}</b> because{" "}
-            {because(e.horizon, a.placement.timeline, a.placement.potential)}.
+            {because(e.horizon, a.placement.timeline, a.placement.potential,
+              Object.values(a.measures).filter((r) => r.scope === "tata" && r.score == null).length)}.
           </p>
         )}
-        <p className="mt-1 text-[12px] text-muted">{PRIORITY_LEGEND}; the horizon says how soon it arrives.</p>
+        <p className="mt-1 text-[12px] text-muted">{PRIORITY_LEGEND}; the horizon says how soon it arrives. The priority comes
+          from how soon × how big; the three scores below describe the case and feed the Point of View.</p>
         <p className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
           <span className="text-muted">The three scores the Point of View explains:</span>
           {AXES.map(([k, label]) => {
@@ -408,7 +419,9 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
       </Section>
 
       <Section id="plan" title={`Tata's plan for it in ${a.fabric}`}
-        state={fo ? { ...LEADER[fo.leader], label: `Commitment: ${LEADER[fo.leader].label} · ${recorded.filter(Boolean).length} of 4 recorded` } : undefined}
+        state={fo ? { ...LEADER[fo.leader], label: `Commitment: ${LEADER[fo.leader].label} · ${recorded.filter(Boolean).length} of 4 recorded`
+          // the path to scale beside it, as the Point of View says it
+          + (fo.step ? ` · ${fo.step}, step ${data.path.findIndex((x) => x.name === fo.step) + 1} of ${data.path.length}` : "") } : undefined}
         closed={fo?.leader === "integrated"}
         what={<>Who owns {tech} in {a.fabric}, where Tata is on its path to scale, and what could stop it. Typed in by people; it
           never changes a score.</>}
@@ -486,8 +499,13 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
 
       {(a.watch_metrics?.length ?? 0) > 0 && (
         <details className="mt-3 rounded-card border border-line bg-white px-5 py-3">
-          <summary className="cursor-pointer text-sm font-semibold">Metrics to watch · {a.watch_metrics!.length}</summary>
-          <div className="mt-2"><WatchMetrics metrics={a.watch_metrics!} /></div>
+          <summary className="cursor-pointer text-sm font-semibold">
+            Signs to watch · {a.watch_metrics!.length}
+            {a.watch_metrics!.some((m) => m.crossed) && <span className="ml-2 font-normal text-amber-900">
+              {a.watch_metrics!.filter((m) => m.crossed).length} crossed</span>}
+          </summary>
+          <p className="mt-1 text-[12.5px] text-muted">{SIGNS_EXPLAINED}</p>
+          <div className="mt-2"><WatchMetrics metrics={a.watch_metrics!} owned={{ techId, onChanged: done }} /></div>
         </details>
       )}
       </div>

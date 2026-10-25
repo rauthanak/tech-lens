@@ -6,7 +6,8 @@ import { formatDay, formatTokens, plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
 import { beforeRecording, tokenLine, tokensIn, type Tokens, type UsageRow } from "@/lib/usage";
 
-type Usage = { by_skill: UsageRow[]; total: Tokens; recorded_since: string | null };
+type Usage = { by_skill: UsageRow[]; total: Tokens; recorded_since: string | null;
+  failures?: { reason: string; calls: number }[] }; // why calls failed, most first
 
 /** What a run's model calls used: one line with how many calls and, under
  *  Technical details, the tokens and a table by skill or combined call.
@@ -42,7 +43,8 @@ export default function ModelUse({ runIds, kind, startedAt, table, refresh, call
   }
   const t = usage.total;
   // the plain line: the calls (unless the page shows them); the tokens only under Technical details
-  const line = [calls && `${plural(t.calls, "model call")}${t.failed > 0 ? ` (${t.failed.toLocaleString()} failed)` : ""}`,
+  const why = usage.failures?.[0] ? `: ${usage.failures[0].reason}${usage.failures.length > 1 ? ", and other reasons" : ""}` : "";
+  const line = [calls && `${plural(t.calls, "model call")}${t.failed > 0 ? ` (${t.failed.toLocaleString()} failed${why})` : ""}`,
     hood && `${tokenLine(t)}${old ? ". Only part of this run was recorded: it began before tokens were recorded" : ""}`]
     .filter(Boolean).join(" · ");
   if (!table && !line) return null;

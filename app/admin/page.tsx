@@ -5,13 +5,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
 import TodoStrip from "@/components/GateList";
+import CrossedSigns from "@/components/CrossedSigns";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
+import { RunNowLine } from "@/components/RunSteps";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { fetchRunsPreview, type RunsPreview } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { useMedia } from "@/lib/media";
+import { useListPlace, withoutPlace } from "@/lib/paging";
 import { usePipeline } from "@/lib/pipeline";
 import type { BriefingSummary, FoundHit, FoundResponse } from "@/lib/signals";
 import { useTechLabel } from "@/lib/tech-labels";
@@ -29,7 +33,7 @@ const WINDOWS = [
   { days: "90", label: "Last 90 days" },
   { days: "all", label: "All time" },
 ];
-const PAGE = 20;
+const PAGE = 15; // findings a page: the Briefing stays short (plan 10, §4)
 
 /** A query string from the values that are set. */
 const query = (values: Record<string, string | null>) =>
@@ -63,14 +67,14 @@ function RadarBriefing() {
   const [summary, setSummary] = useState<BriefingSummary | null>(null);
   const [items, setItems] = useState<FoundHit[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [more, setMore] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [sourceName, setSourceName] = useState<string | null>(null);
   const [preview, setPreview] = useState<RunsPreview | null>(null);
   const listToken = useRef(0); // the latest list request: older answers are dropped
+  const place = useListPlace("briefing-findings");
 
   const setParams = (changes: Record<string, string | null>) => {
-    const next = new URLSearchParams(params.toString());
+    const next = withoutPlace(params); // another scope or filter starts at the first findings
     for (const [k, v] of Object.entries(changes)) {
       if (v) next.set(k, v);
       else next.delete(k);
@@ -97,23 +101,20 @@ function RadarBriefing() {
     ...("run_id" in s.scope ? { run_id: s.scope.run_id } : { since: s.scope.from, until: s.scope.to }),
     tech: tech || null, source_id: source || null, signal_id: type || null, older: String(older) })}`, [tech, source, type, older]);
 
+  // one page of findings at the list's place (lib/paging): kept when you leave and come back
+  const { start, go } = place;
   useEffect(() => {
     if (!summary) return;
     const token = ++listToken.current;
-    fetchJson<FoundResponse>(listUrl(summary, 0))
-      .then((d) => { if (token === listToken.current) { setItems(d.hits); setTotal(d.total); } })
+    fetchJson<FoundResponse>(listUrl(summary, start))
+      .then((d) => {
+        if (token !== listToken.current) return;
+        if (d.total > 0 && start >= d.total) { go(Math.floor((d.total - 1) / PAGE) * PAGE); return; } // fewer now
+        setItems(d.hits);
+        setTotal(d.total);
+      })
       .catch((e) => { if (token === listToken.current) setError(e); });
-  }, [summary, listUrl]);
-
-  const showMore = () => {
-    if (!summary || !items) return;
-    const token = listToken.current;
-    setMore(true);
-    fetchJson<FoundResponse>(listUrl(summary, items.length))
-      .then((d) => { if (token === listToken.current) { setItems([...items, ...d.hits]); setTotal(d.total); } })
-      .catch(setError)
-      .finally(() => setMore(false));
-  };
+  }, [summary, listUrl, start, go]);
 
   useEffect(() => {
     if (!source) return;
@@ -162,7 +163,8 @@ function RadarBriefing() {
             aren&apos;t on the list. Reorder the list in{" "}
             <Link href="/admin/signals/list" className="text-link hover:underline">Setup → Signal list</Link>, at no
             model cost.</li>
-          <li>The rail counts each type in the tab you&apos;re on; click one to show only that type. The window menu, in
+          <li>Kind of finding, beside the tabs, counts each type in the tab you&apos;re on; choose one to show only that
+            type. A story reported on several pages shows once, with where else it was reported. The window menu, in
             the line under the title, sets how far back to look, by collection date.</li>
           <li>To do, at the top, one strip of three columns: what to settle before technologies are scored, what to
             settle before a Point of View goes to leaders (advice, not a gate), and Publish to leaders, with what has
@@ -188,6 +190,12 @@ function RadarBriefing() {
             )}
           </p>
         )}
+        {(s?.updating_days ?? 0) > 0 && (
+          <p className="mt-1 text-[13px] text-amber-900">
+            Totals for {plural(s!.updating_days!, "earlier day")} are being brought up to date after a check of stored
+            pages; until then they count as they stood before it. Today&apos;s are current.
+          </p>
+        )}
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
@@ -205,9 +213,11 @@ function RadarBriefing() {
         </div>
       ) : (
         <>
+          {!runScope && <RunNowLine />}
           <h2 className="mt-6 text-lg font-semibold">To do</h2>
           <p className="text-[13px] text-muted">What waits on you, in the order the radar&apos;s process needs it.</p>
           <TodoStrip />
+          <CrossedSigns />
 
           <h2 className="mt-8 text-lg font-semibold">What the radar found</h2>
           {s && (
@@ -220,39 +230,24 @@ function RadarBriefing() {
                     {name} · {n.toLocaleString()}
                   </button>
                 ))}
-              <span className="text-[12.5px] text-muted">
+              <select aria-label="Kind of finding" className="ml-1 rounded-full border border-line bg-white px-3 py-1 text-[13px]"
+                value={type ?? ""} onChange={(e) => setParams({ type: e.target.value || null })}>
+                <option value="">Every kind of finding · {bandCount(older).toLocaleString()}</option>
+                {s.types.map((t) => ({ ...t, n: typeCount(t.signal_id, older) }))
+                  .filter((t) => t.n > 0 || t.signal_id === type).map((t) => (
+                    <option key={t.signal_id} value={t.signal_id}>{t.signal_id === "other" ? "Other, not on your list" : t.name} · {t.n.toLocaleString()}</option>
+                  ))}
+              </select>
+              <span className="basis-full text-[12.5px] text-muted">
                 {older ? "Published more than 30 days before the radar collected it: background, not new."
-                  : "Published within 30 days of the radar collecting it, or with no publication date; your signal types first."}
+                  : "Published within 30 days of the radar collecting it, or with no publication date; your signal types first. Copies of one story show once."}
               </span>
             </div>
           )}
 
           {s && (
-            <div className={`mt-6 grid grid-cols-1 gap-7 min-[900px]:grid-cols-[240px_minmax(0,1fr)] ${docked
-              ? "min-[1440px]:grid-cols-[220px_minmax(0,1fr)_400px] min-[1800px]:grid-cols-[240px_minmax(0,1fr)_460px]" : ""}`}>
-              <nav aria-label="Signal types"
-                className="min-w-0 min-[900px]:sticky min-[900px]:top-4 min-[900px]:max-h-[calc(100vh-2rem)] min-[900px]:self-start min-[900px]:overflow-y-auto">
-                <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
-                  Found in this {runScope ? "collection" : "window"}
-                </h2>
-                <div className="flex gap-1.5 overflow-x-auto pb-1.5 min-[900px]:grid min-[900px]:gap-px min-[900px]:overflow-visible min-[900px]:pb-0">
-                  {[{ signal_id: "", name: "All findings", count: bandCount(older), older: 0 }, ...s.types]
-                    .map((t) => ({ ...t, count: t.signal_id ? typeCount(t.signal_id, older) : t.count }))
-                    .filter((t) => !t.signal_id || t.count > 0 || t.signal_id === type).map((t) => {
-                    const on = t.signal_id === type;
-                    return (
-                      <button key={t.signal_id || "all"} type="button" aria-pressed={on}
-                        onClick={() => setParams({ type: on || !t.signal_id ? null : t.signal_id })}
-                        className={`flex shrink-0 items-baseline justify-between gap-3 rounded-full border px-3 py-1 text-left text-[13px] min-[900px]:rounded-md min-[900px]:border-0 min-[900px]:px-2.5 ${
-                          on ? "border-navy bg-navy text-white" : "border-line bg-white hover:bg-ground min-[900px]:bg-transparent"} ${
-                          !t.signal_id ? "font-semibold min-[900px]:mb-1.5" : ""} ${t.signal_id === "other" ? "border-dashed min-[900px]:mt-1.5" : ""}`}>
-                        <span>{t.name}</span>
-                        <span className={`text-xs tabular-nums ${on ? "text-white/75" : "text-muted"}`}>{t.count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </nav>
+            <div className={`mt-4 grid grid-cols-1 gap-7 ${docked
+              ? "min-[1440px]:grid-cols-[minmax(0,1fr)_400px] min-[1800px]:grid-cols-[minmax(0,1fr)_460px]" : ""}`}>
 
               <section aria-label="Findings" className="min-w-0">
                 {(type || tech || source || run) && (
@@ -286,17 +281,8 @@ function RadarBriefing() {
                 )}
 
                 {items && items.length > 0 && (
-                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted">
-                    {items.length < total ? (
-                      <>
-                        <button type="button" onClick={showMore} disabled={more}
-                          className="rounded-full border border-line bg-white px-4 py-1.5 text-ink hover:bg-ground disabled:opacity-60">
-                          {more ? "Loading…" : `Show ${Math.min(PAGE, total - items.length)} more`}
-                        </button>
-                        {items.length} of {total.toLocaleString()} shown
-                      </>
-                    ) : `That's all ${plural(total, "finding")}.`}
-                  </div>
+                  total > PAGE ? <Pager className="mt-4" start={start} total={total} size={PAGE} go={go} what="findings" />
+                    : <p className="mt-4 text-sm text-muted">That&apos;s all {plural(total, "finding")}.</p>
                 )}
               </section>
 
@@ -337,6 +323,14 @@ function Findings({ items, grouped, typeName, typeCount }: {
             )}
             <div className={!head && i > 0 ? "border-t border-neutral-100" : ""}>
               <SignalItem item={h} />
+              {(h.also?.length ?? 0) > 0 && (
+                <p className="-mt-2 px-5 pb-3 text-[12.5px] text-muted">
+                  Also reported by{" "}
+                  {h.also!.map((a, k) => (
+                    <Fragment key={a.url}>{k > 0 && ", "}<a href={a.url} target="_blank" rel="noreferrer" className="text-link hover:underline">{a.source}</a></Fragment>
+                  ))}
+                </p>
+              )}
             </div>
           </Fragment>
         );

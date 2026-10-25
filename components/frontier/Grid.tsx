@@ -243,32 +243,38 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
   const sx = (v: number) => M.left + pw * (view.x + (view.k * (v - D0)) / (D1 - D0));
   const sy = (v: number) => M.top + ph * (view.y + (view.k * (D1 - v)) / (D1 - D0));
   const plot: Box = { x0: M.left, y0: M.top, x1: M.left + pw, y1: M.top + ph };
-  const midSoon = (cutpoints.how_soon[0] + cutpoints.how_soon[1]) / 2;
-  const midBig = (cutpoints.how_big[0] + cutpoints.how_big[1]) / 2;
+  // the corners split on the upper band edges: Act is exactly the top priority's cell
+  const midSoon = cutpoints.how_soon[1];
+  const midBig = cutpoints.how_big[1];
 
-  const quadrants = QUADRANTS.map((q0) => {
-    const q = { ...q0, sub: `${q0.left ? "later" : "sooner"} · ${(q0.top ? words.more : words.less).toLowerCase()}` };
-    const [x0, x1] = q.left ? [sx(D0), sx(midSoon)] : [sx(midSoon), sx(D1)];
-    const [y0, y1] = q.top ? [sy(D1), sy(midBig)] : [sy(midBig), sy(D0)];
-    const seen = { x0: Math.max(plot.x0, x0), x1: Math.min(plot.x1, x1), y0: Math.max(plot.y0, y0), y1: Math.min(plot.y1, y1) };
-    // the name goes in the quadrant's outer corner, while enough of it shows
-    const shown = seen.x1 - seen.x0 >= 96 && seen.y1 - seen.y0 >= 44;
-    const tx = q.left ? seen.x0 + 10 : seen.x1 - 10;
-    const ty = q.top ? seen.y0 + 19 : seen.y1 - 22;
-    const w = Math.max(q.name.length * 9, q.sub.length * 6.2);
-    const label: Box = { x0: q.left ? tx : tx - w, x1: q.left ? tx + w : tx, y0: ty - 14, y1: ty + 18 };
-    return { ...q, x0, x1, y0, y1, shown, tx, ty, label };
-  });
+  // corners, dots and where each name goes: worked out again only when the grid changes
+  // (its dots, zoom, size or what's up), not on every hover
+  const { quadrants, dots, blocks, named } = useMemo(() => {
+    const quadrants = QUADRANTS.map((q0) => {
+      const q = { ...q0, sub: `${q0.left ? "later" : "sooner"} · ${(q0.top ? words.more : words.less).toLowerCase()}` };
+      const [x0, x1] = q.left ? [sx(D0), sx(midSoon)] : [sx(midSoon), sx(D1)];
+      const [y0, y1] = q.top ? [sy(D1), sy(midBig)] : [sy(midBig), sy(D0)];
+      const seen = { x0: Math.max(plot.x0, x0), x1: Math.min(plot.x1, x1), y0: Math.max(plot.y0, y0), y1: Math.min(plot.y1, y1) };
+      // the name goes in the quadrant's outer corner, while enough of it shows
+      const shown = seen.x1 - seen.x0 >= 96 && seen.y1 - seen.y0 >= 44;
+      const tx = q.left ? seen.x0 + 10 : seen.x1 - 10;
+      const ty = q.top ? seen.y0 + 19 : seen.y1 - 22;
+      const w = Math.max(q.name.length * 9, q.sub.length * 6.2);
+      const label: Box = { x0: q.left ? tx : tx - w, x1: q.left ? tx + w : tx, y0: ty - 14, y1: ty + 18 };
+      return { ...q, x0, x1, y0, y1, shown, tx, ty, label };
+    });
 
-  const dots: Dot[] = items
-    .map((item, i) => ({ item, i, cx: sx(item.how_soon ?? 0) + offsets[i][0], cy: sy(upOf(item, lens) ?? 0) + offsets[i][1] }))
-    .filter((d) => d.cx > plot.x0 - R && d.cx < plot.x1 + R && d.cy > plot.y0 - R && d.cy < plot.y1 + R);
+    const dots: Dot[] = items
+      .map((item, i) => ({ item, i, cx: sx(item.how_soon ?? 0) + offsets[i][0], cy: sy(upOf(item, lens) ?? 0) + offsets[i][1] }))
+      .filter((d) => d.cx > plot.x0 - R && d.cx < plot.x1 + R && d.cy > plot.y0 - R && d.cy < plot.y1 + R);
 
-  const obstacles: Box[] = [
-    ...quadrants.filter((q) => q.shown).map((q) => q.label),
-    ...dots.map((d) => ({ x0: d.cx - R - 1, x1: d.cx + R + 1, y0: d.cy - R - 1, y1: d.cy + R + 1 })),
-  ];
-  const { blocks, named } = width > 0 ? placeNames(dots, obstacles, plot, withFabric, lens) : { blocks: [], named: 0 };
+    const obstacles: Box[] = [
+      ...quadrants.filter((q) => q.shown).map((q) => q.label),
+      ...dots.map((d) => ({ x0: d.cx - R - 1, x1: d.cx + R + 1, y0: d.cy - R - 1, y1: d.cy + R + 1 })),
+    ];
+    const { blocks, named } = width > 0 ? placeNames(dots, obstacles, plot, withFabric, lens) : { blocks: [], named: 0 };
+    return { quadrants, dots, blocks, named };
+  }, [items, offsets, view, width, lens, withFabric, cutpoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the frontier, sooner to later: a stepped line through its dots, and the band
   // between it and the same line moved back by the band's width on both axes
@@ -372,7 +378,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                   <line key={`b${v}`} x1={plot.x0} x2={plot.x1} y1={sy(v)} y2={sy(v)}
                     stroke="var(--color-faint)" strokeDasharray="2 4" />
                 ))}
-                {/* the quadrants, split halfway between the band edges */}
+                {/* the corners, split on the upper band edges (drawn solid) */}
                 <line x1={sx(midSoon)} x2={sx(midSoon)} y1={plot.y0} y2={plot.y1} stroke="var(--color-faint)" />
                 <line x1={plot.x0} x2={plot.x1} y1={sy(midBig)} y2={sy(midBig)} stroke="var(--color-faint)" />
 

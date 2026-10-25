@@ -6,12 +6,17 @@ import { Suspense, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import Hood from "@/components/Hood";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { fetchJson } from "@/lib/api";
 import { formatAt, formatDay } from "@/lib/format";
+import { useStoredStart } from "@/lib/paging";
+import { useTechLabel } from "@/lib/tech-labels";
 import type { AnalysisError, Hit } from "@/lib/signals";
+import { type Skipped, skippedWords } from "@/lib/skipped";
+import BackLink from "@/components/BackLink";
 
 type Doc = {
   id: string;
@@ -45,7 +50,7 @@ function failureText(e: AnalysisError): string {
 type Run = {
   id: string;
   run_start_date_time?: string;
-  sources: { source_id: string; source_name: string; source_url: string; category: string }[];
+  sources: { source_id: string; source_name: string; source_url: string; category: string; skipped?: Skipped[] }[];
 };
 
 const PAGE = 10; // full texts are heavy — page them
@@ -60,9 +65,10 @@ export default function Page() {
 
 function RunSourcePage() {
   const { id, sid } = useParams<{ id: string; sid: string }>();
+  const label = useTechLabel();
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [start, setStart] = useStoredStart(`run-source:${id}:${sid}`); // 10 full pages at a time, kept on return
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [rules, setRules] = useState<Record<string, string>>({});
@@ -73,38 +79,37 @@ function RunSourcePage() {
     );
 
   useEffect(() => {
-    fetchPage(0)
-      .then((d) => { setDocs(d.documents); setTotal(d.total); })
-      .catch(setError);
+    let live = true;
+    fetchPage(start)
+      .then((d) => { if (live) { setDocs(d.documents); setTotal(d.total); window.scrollTo({ top: 0 }); } })
+      .catch((e) => { if (live) setError(e); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, sid, start]);
+
+  useEffect(() => {
     fetchJson<Run>(`/api/runs/${id}`).then(setRun).catch(() => {});
     fetchJson<{ signals: { _id: string; name: string }[] }>("/api/signals")
       .then((d) => setRules(Object.fromEntries(d.signals.map((r) => [r._id, r.name]))))
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, sid]);
-
-  const loadMore = () => {
-    setLoadingMore(true);
-    fetchPage(docs?.length ?? 0)
-      .then((d) => { setDocs((prev) => [...(prev ?? []), ...d.documents]); setTotal(d.total); })
-      .catch(setError)
-      .finally(() => setLoadingMore(false));
-  };
 
   const source = run?.sources.find((s) => s.source_id === sid);
 
   return (
     <div>
+      <Suspense fallback={null}><BackLink fallback={`/admin/runs/${id}`} fallbackLabel="The collection" /></Suspense>
       <PageHeader eyebrow={run?.run_start_date_time ? `Collection of ${formatDay(run.run_start_date_time)}` : "Collection"} title={source?.source_name ?? sid} right={<TechnicalDetailsSwitch />}
         intro="Every page this source gave in one collection, and what the radar made of each."
         help={<>
-          <li>Pages are in the order they were collected. Each shows its type, its crawl depth (0 is a start page),
-            when it was collected and published, and the technology names first found on it.</li>
+          <li>Pages are in the order they were collected. Each shows its type, when it was collected and published,
+            and the technologies named on it (each opens the list, searched by it); Technical details adds its crawl
+            depth (0 is a start page).</li>
           <li>&ldquo;Unchanged since previous run&rdquo;: the page hadn&apos;t changed, so it cost no model call and
             reuses the earlier analysis. &ldquo;Set aside&rdquo;: a Can ignore rule matched it, so it&apos;s kept but
             not used for technologies or assessments.</li>
           <li>Click a finding for its details and source. Beside each page are its summary and the model&apos;s own
-            read of it (Scout&apos;s take).</li>
+            read of it (The radar&apos;s read).</li>
           <li>&ldquo;Couldn&apos;t be analysed&rdquo; and &ldquo;Partly analysed&rdquo; give the reason; Check again on
             Operations retries them.</li>
         </>}>
@@ -114,16 +119,26 @@ function RunSourcePage() {
           {source && (
             <span className="font-mono text-xs text-neutral-500">{source.source_url}</span>
           )}
-          <Link
-            href={`/admin/runs/${id}`}
-            className="text-link underline underline-offset-4"
-          >
-            back to the collection
-          </Link>
         </p>
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
+
+      {(source?.skipped?.length ?? 0) > 0 && (
+        <div className="mt-5 rounded-card border border-line bg-white px-5 py-3 text-sm">
+          <p>Left out of this collection because they couldn&apos;t be read; the rest of the source was read as usual.</p>
+          <ul className="mt-1.5 space-y-1">
+            {source!.skipped!.map((k) => (
+              <li key={`${k.what}:${k.reason}`}>
+                {skippedWords([k])}
+                <span className="block break-all font-mono text-[11.5px] text-neutral-500">
+                  {k.examples.join(" · ")}{k.count > k.examples.length && ` and ${(k.count - k.examples.length).toLocaleString()} more`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {docs && (
         <div className="mt-7 rounded-card border border-line bg-white">
@@ -150,13 +165,13 @@ function RunSourcePage() {
                 >
                   {d.end_url}
                 </a>
-                <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-neutral-500">
-                  <span className="bg-neutral-100 px-1.5 py-0.5 uppercase">
-                    {d.kind ?? "article"}
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-neutral-500">
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-neutral-600">
+                    {({ article: "Article", pdf: "PDF", document: "Document" } as Record<string, string>)[d.kind ?? "article"] ?? d.kind}
                   </span>
-                  <span>depth {d.depth ?? "—"}</span>
-                  <span>extracted {formatAt(d.scraped_at)}</span>
-                  {d.published_date && <span>published {d.published_date}</span>}
+                  <Hood><span className="font-mono text-[11px]">depth {d.depth ?? "—"}</span></Hood>
+                  <span>collected {formatAt(d.scraped_at)}</span>
+                  {d.published_date && <span>published {formatDay(d.published_date)}</span>}
                   {d.is_stub && (
                     <span className="text-ink">unchanged since previous run</span>
                   )}
@@ -184,12 +199,10 @@ function RunSourcePage() {
                 {(d.technologies?.length ?? 0) > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {d.technologies!.map((t) => (
-                      <span
-                        key={t}
-                        className="rounded-full bg-navy/5 px-2 py-0.5 text-[11px] text-ink"
-                      >
-                        {t}
-                      </span>
+                      <Link key={t} href={`/admin/technologies?${new URLSearchParams({ q: t })}`}
+                        className="rounded-full bg-navy/5 px-2 py-0.5 text-[11.5px] text-ink hover:bg-navy/10">
+                        {label(t)}
+                      </Link>
                     ))}
                   </div>
                 )}
@@ -244,7 +257,7 @@ function RunSourcePage() {
                 {d.scout_take && (
                   <div className="mt-3 border-l-2 border-navy/30 pl-3">
                     <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                      Scout&apos;s take
+                      The radar&apos;s read
                     </div>
                     <p className="mt-1 text-sm italic leading-relaxed text-neutral-600">
                       {d.scout_take}
@@ -264,15 +277,9 @@ function RunSourcePage() {
               </div>
             </div>
           ))}
-          {docs.length < total && (
+          {total > PAGE && (
             <div className="border-t border-neutral-100 px-6 py-3">
-              <button
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50"
-              >
-                {loadingMore ? "Loading…" : `Load more (${docs.length} of ${total})`}
-              </button>
+              <Pager start={start} total={total} size={PAGE} go={setStart} what="pages" />
             </div>
           )}
         </div>

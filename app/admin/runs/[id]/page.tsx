@@ -2,16 +2,24 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, Fragment, useCallback, useEffect, useRef, useState } from "react";
 import BackendError from "@/components/BackendError";
 import Hood from "@/components/Hood";
 import ModelUse from "@/components/ModelUse";
 import PageHeader from "@/components/PageHeader";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
+import ConfirmAction from "@/components/ConfirmAction";
+import RunSteps, { pipelineKey, type RunRecord } from "@/components/RunSteps";
 import StatusChip from "@/components/StatusChip";
-import { errorText, fetchJson, sendJson } from "@/lib/api";
-import { duration, formatAt, formatDay, plural } from "@/lib/format";
+import { fetchJson, sendJson } from "@/lib/api";
+import { usePipeline } from "@/lib/pipeline";
+import { sourceProblem } from "@/lib/problems";
+import { duration, formatAt, formatDay, plural, collectedLabel } from "@/lib/format";
+import { type Skipped, skippedWords } from "@/lib/skipped";
 import { LIVE_DOT } from "@/lib/theme";
+import { everyVisible } from "@/lib/visible";
+import BackLink from "@/components/BackLink";
+import OperationsTabs from "@/components/OperationsTabs";
 
 /* ── data ──────────────────────────────────────────────────────────── */
 
@@ -28,12 +36,14 @@ type SourceStat = {
   error: string | null;
   incomplete?: boolean;
   incomplete_note?: string | null;
+  skipped?: Skipped[]; // pages and links left out because they couldn't be read, by reason
 };
 
 type SubstageEvent = { stage: string; substage: string; at: string };
 type PhaseEvent = { phase: string; at: string };
 
 type Resolve = {
+  new_pages?: number | null;  // the pages this Organize worked on (none when it started over: it read every page)
   id: string;
   status: string;
   phase: string;
@@ -44,32 +54,14 @@ type Resolve = {
   error?: string;
 } & Record<string, unknown>;
 
-type UsedIn = {
-  scoring_run_id: string;
-  status: string | null;
-  started_at: string | null;
-  technologies: number;
-  povs: number;
-};
-
-type Run = {
-  id: string;
-  status: string;
-  stage?: string;
+/** A collection's record (GET /api/runs/{id}): what the steps read, plus the per-source rows and stage history. */
+type Run = Omit<RunRecord, "sources" | "resolve" | "analysis_errors"> & {
   stage_history?: { stage: string; at: string }[];
   substage_history?: SubstageEvent[];
   resolve_id?: string;
   resolve?: Resolve;
-  run_start_date_time: string;
-  run_end_date_time: string | null;
-  error: string | null;
-  totals: {
-    sources: number; pages_visited: number; documents: number; new_documents: number;
-    signals?: number; other_signals?: number; set_aside?: number;
-  };
   sources: SourceStat[];
   crawl_settings?: { pages_per_source?: number }; // as the collection ran
-  used_in?: UsedIn[];
   assessments_before_upgrade?: number;
   analysis_errors?: { reason: string; detail: string; pages: number; sources: string[] }[];
 };
@@ -109,7 +101,7 @@ const STAGE_INFO: Record<string, {
   classifying: {
     eyebrow: "STAGE 4 · CLASSIFY", title: "Judging evidence", kind: "llm",
     box: "Judges each technology with new pages",
-    blurb: "One model call per technology with new pages: how solid its evidence is (independent sources, kinds of source and event, credibility), its domain and sub-domain, commercial availability, maturity (TRL), and whether it may be nascent. The step stops at its token limit (Setup › Settings) and says so.",
+    blurb: "One model call per technology with new pages: how solid its evidence is (independent sources, kinds of source and event, credibility), its domain and sub-domain, commercial availability, maturity (TRL), and whether it may be nascent. Catalog technologies go first, then those with the most pages.",
     inn: "each technology's newest pages, those with findings first",
     out: "for each technology, its judgement with reasons and pages",
   },
@@ -312,39 +304,61 @@ const ACCESS_ICON: Record<string, { icon: string; title: string }> = {
   none: { icon: "🔒", title: "Never collected" },
 };
 
-/** The per-source table, grouped by horizon — scales to hundreds of
- *  sources. Rows open the documents the source gave in this run. */
 /** A source's note, in words: why it stopped, or why it gave nothing. A
  *  website's stored note reads "didn't finish: 250 links left". */
 function sourceNote(s: SourceStat, how: string, budget?: number): string | null {
+  const notes: string[] = [];
   if (s.incomplete_note) {
     const left = s.incomplete_note.match(/^didn't finish: (\d+) links? left$/);
-    if (!left) return s.incomplete_note;
-    const links = `${plural(Number(left[1]), "link")} not visited`;
-    return budget && s.pages_visited >= budget ? `Stopped at its page budget of ${budget}; ${links}` : links;
+    const links = left && `${plural(Number(left[1]), "link")} not visited`;
+    notes.push(!links ? s.incomplete_note
+      : budget && s.pages_visited >= budget ? `Reached its page limit of ${budget}; ${links}` : `Reached the link depth; ${links}`);
+  } else if (how === "query" && s.source_end_date_time && !s.error && s.documents === 0) {
+    notes.push("No new results from its saved searches");
   }
-  if (how === "query" && s.source_end_date_time && !s.error && s.documents === 0)
-    return "No new results from its saved searches";
-  return null;
+  const skipped = skippedWords(s.skipped);
+  if (skipped) notes.push(skipped.replace(/^./, (c) => c.toUpperCase()));
+  return notes.join(". ") || null;
 }
 
+const SOURCE_GROUPS: [NodeState, string][] = [["failed", "Couldn't finish"], ["active", "Reading now"], ["done", "Done"]];
+
+/** The per-source table, grouped by where each source stands: those that
+ *  couldn't finish first, then those being read, then the done ones, folded
+ *  when the others need the attention. Rows open the pages the source gave
+ *  in this run; its address, kind and horizon are under Technical details. */
 function SourcesTable({ run, runId, parent, running, access, horizons }: {
   run: Run; runId: string; parent: NodeState; running: boolean; access: Record<string, string>;
   horizons: Record<string, string>;
 }) {
   const router = useRouter();
+  const [showDone, setShowDone] = useState<boolean | null>(null);
   if (run.sources.length === 0)
     return (
       <p className="mt-3 border border-line bg-ground px-3 py-2 text-[13px] text-muted">
         {running ? "Scouts are on their way…" : "No sources were collected."}
       </p>
     );
-  const groups = new Map<string, SourceStat[]>();
+  const groups = new Map<NodeState, SourceStat[]>();
   for (const s of run.sources) {
-    if (!groups.has(s.category)) groups.set(s.category, []);
-    groups.get(s.category)!.push(s);
+    const st = sourceState(s, parent);
+    groups.set(st, [...(groups.get(st) ?? []), s]);
   }
+  const budget = run.crawl_settings?.pages_per_source;
+  // the same rule the API counts by (services/problems.didnt_finish): a website with links left unread
+  const website = (s: SourceStat) => access[s.source_id] !== "query";
+  const unfinished = run.sources.filter((s) => s.incomplete && website(s)).length;
+  const atBudget = run.sources.filter((s) => budget && s.pages_visited >= budget && s.incomplete && website(s)).length;
+  const others = (groups.get("failed")?.length ?? 0) + (groups.get("active")?.length ?? 0);
+  const doneOpen = showDone ?? others === 0;
   return (
+    <>
+    {budget && (
+      <p className="mt-1 text-[13px] text-muted">
+        A website is read up to {budget} pages, the most promising links first
+        {unfinished > 0 ? `: ${plural(unfinished, "website")} weren't read to the end (${atBudget.toLocaleString()} reached the page limit, the rest the link depth)` : ""}.
+      </p>
+    )}
     <div className="mt-3 overflow-x-auto rounded-card border border-line bg-white">
       <table className="w-full text-sm">
         <thead>
@@ -352,22 +366,30 @@ function SourcesTable({ run, runId, parent, running, access, horizons }: {
             <th className="px-4 py-2.5 font-semibold">Source</th>
             <th className="px-4 py-2.5 font-semibold">Visited</th>
             <th className="px-4 py-2.5 font-semibold">Saved · new</th>
-            <th className="px-4 py-2.5 font-semibold">Duration</th>
-            <th className="px-4 py-2.5 font-semibold">Note</th>
+            <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">Duration</th>
+            <th className="hidden px-4 py-2.5 font-semibold sm:table-cell">Note</th>
           </tr>
         </thead>
         <tbody>
-          {[...groups.entries()].map(([category, sources]) => (
-            <Fragment key={category}>
+          {SOURCE_GROUPS.filter(([st]) => groups.get(st)?.length).map(([group, title]) => {
+            const sources = groups.get(group)!;
+            const folded = group === "done" && !doneOpen;
+            return (
+            <Fragment key={group}>
               <tr className="bg-ground">
                 <td colSpan={5} className="px-4 py-1.5 text-xs font-semibold">
-                  {horizons[category] ? `${horizons[category]} (${category})` : category} · {plural(sources.length, "source")}
+                  {title} · {plural(sources.length, "source")}
+                  {group === "done" && others > 0 && (
+                    <button type="button" onClick={() => setShowDone(!doneOpen)}
+                      className="ml-3 font-normal text-link hover:underline">{doneOpen ? "Hide" : "Show"}</button>
+                  )}
                 </td>
               </tr>
-              {sources.map((s) => {
-                const st = sourceState(s, parent);
+              {!folded && sources.map((s) => {
                 const how = ACCESS_ICON[access[s.source_id] ?? "crawl"];
-                const note = sourceNote(s, access[s.source_id] ?? "crawl", run.crawl_settings?.pages_per_source);
+                // the page budget is said once, above; a row says only what's particular to it
+                const note = budget && s.pages_visited >= budget && s.incomplete_note
+                  ? null : sourceNote(s, access[s.source_id] ?? "crawl", budget);
                 return (
                   <tr
                     key={s.source_id}
@@ -375,24 +397,30 @@ function SourcesTable({ run, runId, parent, running, access, horizons }: {
                     className="cursor-pointer border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50"
                   >
                     <td className="px-4 py-2.5">
-                      <div className="flex flex-wrap items-center gap-2 font-medium">
-                        <span title={how.title} className="w-4 text-center text-xs">{how.icon}</span>
-                        {s.source_name}
-                        {st === "done" && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-neutral-200 text-[8px] font-bold text-muted">✓</span>}
-                        {st === "failed" && <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-failed-dot text-[8px] font-bold text-ink">✕</span>}
-                      </div>
-                      <div className="pl-6 font-mono text-xs text-faint">{s.source_url}</div>
+                      <div className="font-medium">{s.source_name}</div>
+                      {/* on a phone, why it stopped and its note sit under its name */}
+                      {(s.error || note) && (
+                        <div className="mt-0.5 text-xs sm:hidden">
+                          {s.error && <span className="block text-failed">{cap(sourceProblem(s.error).why)}</span>}
+                          {note && <span className="block text-neutral-600">{note}</span>}
+                        </div>
+                      )}
+                      <Hood>
+                        <div className="font-mono text-xs text-faint">
+                          <span title={how.title}>{how.icon}</span> {s.source_url} · {horizons[s.category] ?? s.category}
+                        </div>
+                      </Hood>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">{s.pages_visited}</td>
-                    <td className="px-4 py-2.5 tabular-nums">
+                    <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">
                       {s.documents}
                       <span className="text-faint"> · {s.new_documents} new</span>
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-xs">
+                    <td className="hidden px-4 py-2.5 font-mono text-xs sm:table-cell">
                       {duration(s.source_start_date_time, s.source_end_date_time)}
                     </td>
-                    <td className="px-4 py-2.5 text-xs">
-                      {s.error && <span className="block text-failed">{s.error}</span>}
+                    <td className="hidden px-4 py-2.5 text-xs sm:table-cell">
+                      {s.error && <span className="block text-failed">{cap(sourceProblem(s.error).why)}</span>}
                       {note && <span className="block">{note}</span>}
                       {!s.error && !note && !s.source_end_date_time && (
                         <span className="inline-flex items-center gap-1.5"><span className={LIVE_DOT} />in progress</span>
@@ -402,39 +430,62 @@ function SourcesTable({ run, runId, parent, running, access, horizons }: {
                 );
               })}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
-/* ── the three step cards ──────────────────────────────────────────── */
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-function StepCard({ step, title, children, href, linkText }: {
-  step: number; title: string; children: React.ReactNode; href?: string; linkText?: string;
-}) {
+/** What went wrong, first and in words: each source that couldn't finish
+ *  (why, and what to do), the pages that couldn't be analysed, and the
+ *  technologies whose evidence couldn't be judged. Nothing when all went well. */
+function Problems({ run, runId }: { run: Run; runId: string }) {
+  const sources = run.sources.filter((s) => s.error);
+  const pages = run.analysis_errors ?? [];
+  const judged = run.classify?.failed ?? 0;
+  const n = sources.length + pages.length + (judged > 0 ? 1 : 0);
+  if (n === 0) return null;
   return (
-    <div className="flex min-w-[220px] flex-1 flex-col rounded-card border border-line bg-white px-4 py-3">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-neutral-500">{step} · {title}</div>
-      <div className="mt-2 flex-1 text-sm">{children}</div>
-      {href && (
-        <Link href={href} className="mt-2 text-xs text-link underline underline-offset-4">{linkText}</Link>
-      )}
-    </div>
-  );
-}
-
-function Figures({ items }: { items: [string, React.ReactNode][] }) {
-  return (
-    <div className="flex flex-wrap gap-x-5 gap-y-1">
-      {items.map(([label, value]) => (
-        <div key={label}>
-          <div className="text-xl font-semibold tabular-nums leading-tight">{value}</div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-neutral-500">{label}</div>
-        </div>
-      ))}
-    </div>
+    <section id="problems" aria-label="Problems" className="mt-6 scroll-mt-20 rounded-card border border-failed/40 bg-failed/5 px-5 py-3">
+      <h2 className="text-sm font-semibold text-failed">{plural(n, "problem")}</h2>
+      <ul className="mt-1.5 space-y-1.5 text-sm">
+        {sources.map((s) => {
+          const p = sourceProblem(s.error!);
+          return (
+            <li key={s.source_id}>
+              <Link href={`/admin/runs/${runId}/sources/${s.source_id}`} className="font-medium text-link hover:underline">
+                {s.source_name}</Link>: {p.why}. <span className="text-neutral-600">{p.fix}</span>
+              <Hood><span className="block font-mono text-xs text-neutral-500">{s.error}</span></Hood>
+            </li>
+          );
+        })}
+        {pages.map((e) => (
+          <li key={e.reason}>
+            {plural(e.pages, "page")} couldn&apos;t be analysed: {e.reason}
+            {e.detail && <span className="text-neutral-600"> ({e.detail})</span>}
+            <span className="text-neutral-600"> · from </span>
+            {e.sources.map((s, i) => (
+              <span key={s}>
+                {i > 0 && ", "}
+                <Link href={`/admin/runs/${runId}/sources/${s}`} className="text-link hover:underline">{s}</Link>
+              </span>
+            ))}
+            <span className="text-neutral-600">. Check again on Operations retries them.</span>
+          </li>
+        ))}
+        {judged > 0 && (
+          <li>
+            {plural(judged, "technology", "technologies")} couldn&apos;t be judged.{" "}
+            <span className="text-neutral-600">The next collection tries again.</span>
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }
 
@@ -448,12 +499,12 @@ export default function RunDetailPage() {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
-  const [terminateError, setTerminateError] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null); // drilled stage id, or null = top level
   const [selected, setSelected] = useState<string | null>(null); // node id within current level
   const [access, setAccess] = useState<Record<string, string>>({});
   const [horizons, setHorizons] = useState<Record<string, string>>({}); // "H1" → "Already on the market"
   const runningRef = useRef(false);
+  const moved = pipelineKey(usePipeline()); // steps after the collection move on too
 
   const load = useCallback((silent = false) => {
     fetchJson<Run>(`/api/runs/${id}`)
@@ -476,21 +527,16 @@ export default function RunDetailPage() {
         setHorizons(Object.fromEntries(Object.entries(d.horizons).map(([h, m]) => [h, m.label ?? h])));
       })
       .catch(() => {});
-    const timer = setInterval(() => load(true), REFRESH_IDLE_MS);
-    const fast = setInterval(() => {
-      if (runningRef.current) load(true);
-    }, REFRESH_RUNNING_MS);
-    return () => { clearInterval(timer); clearInterval(fast); };
+    // only while the tab is visible; quickly while the collection runs
+    const slow = everyVisible(() => load(true), REFRESH_IDLE_MS);
+    const fast = everyVisible(() => { if (runningRef.current) load(true); }, REFRESH_RUNNING_MS);
+    return () => { slow(); fast(); };
   }, [load]);
+  useEffect(() => { if (moved) load(true); }, [moved, load]);
 
   async function terminate() {
-    setTerminateError(null);
-    try {
-      await sendJson(`/api/runs/${id}/terminate`, "POST", {});
-      load(true);
-    } catch (e) {
-      setTerminateError(errorText(e));
-    }
+    await sendJson(`/api/runs/${id}/terminate`, "POST", {});
+    load(true);
   }
 
   const running = run?.status === "running";
@@ -630,8 +676,9 @@ export default function RunDetailPage() {
             </div>
           )}
           {stage === "resolving" && run.resolve && (
-            <div className="mt-5 grid grid-cols-3 gap-3">
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="STATUS" value={<span className="text-[13px]">{run.resolve.status}</span>} />
+              <Stat label="NEW PAGES" value={run.resolve.new_pages ?? "—"} />
               <Stat label="MODEL CALLS" value={run.resolve.llm_calls} />
               <Stat label="DURATION" value={<span className="text-[13px]">{duration(run.resolve.started_at, run.resolve.finished_at ?? null)}</span>} />
             </div>
@@ -665,64 +712,67 @@ export default function RunDetailPage() {
   }
 
   const totals = run?.totals;
-  const signalsKnown = totals?.signals !== undefined;
-  const used = run?.used_in ?? [];
 
   return (
     <div>
+      <OperationsTabs />
+      <Suspense fallback={null}><BackLink fallback="/admin/runs" fallbackLabel="Collections" /></Suspense>
       <PageHeader
         eyebrow="Collection"
-        title={run ? `Collection · ${formatDay(run.run_start_date_time)}` : "Collection"}
-        intro="What one collection fetched, what it found, and where its pages were used."
+        title={run ? `Collection of ${formatDay(run.run_start_date_time, run.tz)}` : "Collection"}
+        intro="One run, from collecting pages to publishing to leaders: where it stands now, and what each step did."
         help={<>
-          <li>The three cards follow the collection: pages visited, saved and new or changed; the findings on those
-            pages, as of the collection (See its findings opens them on the Briefing); then the Organize step, which
-            merges different spellings of the same technology into one name, across every page collected so far.</li>
-          <li>Used in: the assessment runs that read this collection&apos;s pages, and the Points of View built from
-            them.</li>
-          <li>Sources: one row per source, grouped by horizon (see Setup › Sources). The note says why a source
-            stopped: a website is read up to its page budget, most promising links first, so some links are not
-            visited; a data source with results still to collect carries on at the next collection. Click a source
-            for its pages.</li>
-          <li>Pages that couldn&apos;t be analysed are listed in red with the reason; Check again on Operations
-            retries them.</li>
-          <li>Terminate stops a running collection and keeps what it has collected. The Technical details switch
-            shows its stages and the model&apos;s work in each.</li>
+          <li>Problems come first, when there are any: each source that couldn&apos;t finish, why and what to do; pages
+            that couldn&apos;t be analysed (Check again on Operations retries them); technologies whose evidence
+            couldn&apos;t be judged.</li>
+          <li>The six steps of a run, in order, from collecting to publishing to leaders. The Now line says which step
+            the collection is on and what comes next; that step is marked on the left. Each step says where it stands (in
+            progress, waits for you, stopped and why, done), who moves it on, what it did, and links to its results.
+            Collect, Organize and Classify run by themselves once you start a collection; Classify judges every
+            technology with new pages, catalog technologies first. Assess, Write and Publish wait for you: on the latest collection their
+            buttons show the model-call cost and ask before anything starts.</li>
+          <li>Assess, Write and Publish count what was done from this collection&apos;s start until the next
+            collection&apos;s. On an older run they show what happened until then, with no buttons. Under Assess,
+            &ldquo;Its pages were read in&rdquo; lists the assessment runs that used this collection&apos;s pages.</li>
+          <li>Times are in the zone of the person who started the collection. The page updates by itself.</li>
+          <li>Sources: those that couldn&apos;t finish first, then those being read, then the done ones (folded while
+            the others need attention). A website is read up to its page budget, most promising links first, so
+            some links are not visited; a data source with results still to collect carries on at the next
+            collection. Click a source for its pages. Technical details adds each source&apos;s address and horizon.</li>
+          <li>Stop the collection asks first; it keeps what has been collected. The Technical details switch shows
+            the stages and the model&apos;s work in each.</li>
         </>}
         right={
           <div className="flex flex-col items-end gap-3">
             <TechnicalDetailsSwitch />
-            {running && (
-              <button onClick={terminate}
-                className="rounded-full border border-failed/40 bg-white px-4 py-2 text-sm font-medium text-failed hover:bg-failed/5">
-                Terminate
-              </button>
+            {running && run && (run.stage === "crawling" || run.stage === "orchestrating") && (
+              <ConfirmAction label="Stop the collection" secondary confirmLabel="Stop it" doneLabel="Stopping…"
+                question={`Stop it? The ${plural(run.totals?.documents ?? 0, "page")} saved so far are kept; sources not yet read are skipped until the next collection.`}
+                onConfirm={terminate} />
             )}
           </div>
         }
       >
         {run && (
           <p className="mt-2 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
-            <StatusChip status={run.status} />
-            <span>started {formatAt(run.run_start_date_time)}</span>
-            <span>ended {formatAt(run.run_end_date_time)}</span>
-            <span>took {duration(run.run_start_date_time, run.run_end_date_time)}</span>
-            {running && <>
-              <button onClick={() => load()} title="Refresh now"
-                className="rounded-full border border-line bg-white px-2 py-0.5 text-sm hover:bg-neutral-100">⟳</button>
-              <span className="text-xs text-neutral-500">
-                refreshed {refreshedAt ? formatAt(refreshedAt.toISOString()) : "—"}
-              </span>
-            </>}
+            <StatusChip status={run.status}
+              label={collectedLabel(run.status, run.sources.filter((x) => x.error && x.error !== "run cancelled").length)} />
+            {running ? (
+              <span>running for {duration(run.run_start_date_time, null)}</span>
+            ) : (
+              <span>took {duration(run.run_start_date_time, run.run_end_date_time)}</span>
+            )}
+            <span>started {formatAt(run.run_start_date_time, run.tz)}</span>
+            {!running && run.run_end_date_time && <span>ended {formatAt(run.run_end_date_time, run.tz)}</span>}
+            {running && <span className="text-xs text-neutral-500">This page updates by itself.</span>}
             <Hood><span className="font-mono text-xs text-neutral-500">collection {id}</span></Hood>
           </p>
         )}
-        {run && <ModelUse runIds={[id, ...(run.resolve_id ? [run.resolve_id] : [])]} startedAt={run.run_start_date_time}
-          refresh={refreshedAt} />}
+        {run && <ModelUse runIds={[id, ...(run.resolve_id ? [run.resolve_id] : []), ...(run.classify ? [run.classify.id] : [])]}
+          startedAt={run.run_start_date_time} refresh={refreshedAt} />}
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
-      {terminateError && <p className="mt-4 text-sm text-failed">Terminate failed: {terminateError}</p>}
       {run?.error && (
         <p className="mt-4 rounded-card border border-failed/40 bg-failed/5 px-4 py-2 font-mono text-xs text-failed">
           {run.error}
@@ -731,97 +781,18 @@ export default function RunDetailPage() {
 
       {run && totals && (
         <>
-          {/* 1 · the three steps this run went through */}
-          <div className="mt-6 flex flex-wrap gap-3">
-            <StepCard step={1} title="Collect">
-              <Figures items={[["sources", totals.sources.toLocaleString()], ["pages visited", totals.pages_visited.toLocaleString()],
-                ["pages saved", totals.documents.toLocaleString()], ["new or changed", totals.new_documents.toLocaleString()]]} />
-            </StepCard>
-            <StepCard step={2} title="Findings" href={`/admin?run=${id}`}
-              linkText="See its findings on the Briefing">
-              {signalsKnown ? (<>
-                <Figures items={[["match the signal list", (totals.signals ?? 0).toLocaleString()],
-                  ["match no signal", (totals.other_signals ?? 0).toLocaleString()]]} />
-                <p className="mt-2 text-xs text-neutral-600">
-                  {plural(totals.set_aside ?? 0, "page")} set aside: nothing worth keeping
-                </p>
-              </>) : (
-                <p className="text-neutral-500">— (this collection predates signals)</p>
-              )}
-            </StepCard>
-            <StepCard step={3} title="Organize: merge names" href="/admin/technologies" linkText="Review technologies">
-              {run.resolve?.status === "completed" ? (
-                <p>
-                  Merged {Number(run.resolve.raw_strings ?? 0).toLocaleString()} names, from every page collected so
-                  far; the radar then knew {Number(run.resolve.technologies ?? 0).toLocaleString()} technologies.
-                </p>
-              ) : run.resolve?.status === "failed" ? (
-                <p className="text-failed">Didn&apos;t finish{run.resolve.error ? `: ${run.resolve.error}` : "."}</p>
-              ) : run.resolve || states.resolving === "pending" || running ? (
-                <p className="text-neutral-500">{run.resolve ? "Merging names…" : "Runs after collecting finishes."}</p>
-              ) : (
-                <p className="text-neutral-500">Skipped: another merge of names was running.</p>
-              )}
-            </StepCard>
-          </div>
+          <Problems run={run} runId={id} />
 
-          {/* 2 · recorded facts only: which assessments read this run's pages */}
-          <section className="mt-6 rounded-card border border-line bg-white px-5 py-4">
-            <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">Used in</div>
-            {used.length > 0 ? (
-              <ul className="mt-2 space-y-1.5 text-sm">
-                {used.map((u) => (
-                  <li key={u.scoring_run_id}>
-                    Used in assessments of <b>{u.technologies}</b> technolog{u.technologies === 1 ? "y" : "ies"}{" "}
-                    in the <Link href={`/admin/scoring/assessments/${u.scoring_run_id}`} className="text-link underline underline-offset-4">
-                      assessment run of {formatAt(u.started_at)}</Link>
-                    <Hood><span className="ml-1 font-mono text-xs text-neutral-500">{u.scoring_run_id}</span></Hood>.
-                    {u.povs > 0 && <> {u.povs} Point{u.povs === 1 ? "" : "s"} of View built from them.</>}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
-                <span>Not used in any assessment yet. Review technology names, then choose what to assess.</span>
-                <Link href="/admin/technologies" className="rounded-full border border-line bg-white px-3 py-1 text-xs hover:bg-neutral-100">Technologies</Link>
-                <Link href="/admin/scoring/assessments" className="rounded-full border border-line bg-white px-3 py-1 text-xs hover:bg-neutral-100">Assessment runs</Link>
-              </div>
-            )}
-            {(run.assessments_before_upgrade ?? 0) > 0 && (
-              <p className="mt-2 text-xs text-neutral-500">
-                Not recorded for assessments before the upgrade ({run.assessments_before_upgrade} of them).
-              </p>
-            )}
-          </section>
+          {/* 1 · the run from start to publish, each step saying where it stands */}
+          <div className="mt-6"><RunSteps run={run} /></div>
 
-          {/* 3 · per source */}
+          {/* 2 · per source */}
           <section className="mt-6">
             <h2 className="text-lg font-semibold">Sources</h2>
             <SourcesTable run={run} runId={id} parent={states.crawling} running={running} access={access} horizons={horizons} />
-            {(run.analysis_errors?.length ?? 0) > 0 && (
-              <div className="mt-4 rounded-card border border-failed/40 bg-failed/5 px-4 py-3">
-                <h3 className="text-sm font-semibold text-failed">Pages that couldn&apos;t be analysed</h3>
-                <ul className="mt-1.5 space-y-1 text-sm text-failed">
-                  {run.analysis_errors!.map((e) => (
-                    <li key={e.reason}>
-                      {e.pages} {e.pages === 1 ? "page" : "pages"}: {e.reason}
-                      {e.detail && <span className="text-failed/80"> ({e.detail})</span>}
-                      <span className="text-neutral-600"> · </span>
-                      {e.sources.map((s, i) => (
-                        <span key={s}>
-                          {i > 0 && ", "}
-                          <Link href={`/admin/runs/${id}/sources/${s}`} className="underline underline-offset-2">{s}</Link>
-                        </span>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-1.5 text-xs text-neutral-600">Check again on Operations retries them.</p>
-              </div>
-            )}
           </section>
 
-          {/* 4 · technical detail */}
+          {/* 3 · technical detail */}
           <Hood>
             <section className="mt-8">
               <h2 className="text-lg font-semibold">Technical details</h2>

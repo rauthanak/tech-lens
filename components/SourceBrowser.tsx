@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import BackendError from "@/components/BackendError";
@@ -56,6 +57,7 @@ const CLUSTER_NAMES: Record<string, string> = {
   conferences: "Conferences",
   corporate_research_vendor_events: "Corporate research and vendor events",
   government_funding: "Government funding",
+  regulators: "Regulators and agencies",
   patents: "Patents",
   preprints_journals: "Preprints and journals",
   standards_foundations: "Standards bodies and foundations",
@@ -143,8 +145,9 @@ export default function SourceBrowser() {
       prev?.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: 1 }
     );
 
-  const SortHeader = ({ label, k }: { label: string; k: SortKey }) => (
-    <th className="px-4 py-2.5 font-medium">
+  const SortHeader = ({ label, k, wide }: { label: string; k: SortKey; wide?: boolean }) => (
+    // `wide`: a column folded into the source's own cell on a phone
+    <th className={`px-4 py-2.5 font-medium ${wide ? "hidden sm:table-cell" : ""}`}>
       <button
         onClick={() => toggleSort(k)}
         className="flex items-center gap-1 uppercase tracking-wider hover:text-neutral-800"
@@ -247,10 +250,11 @@ export default function SourceBrowser() {
                     <thead>
                       <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                         <SortHeader label="Source" k="name" />
-                        <th className="px-4 py-2.5 font-medium">How it&apos;s read</th>
-                        <SortHeader label="Kind of source" k="cluster" />
-                        <SortHeader label="Cost" k="cost" />
-                        <SortHeader label="Switched on" k="enabled" />
+                        <th className="hidden px-4 py-2.5 font-medium sm:table-cell">How it&apos;s read</th>
+                        <SortHeader label="Kind of source" k="cluster" wide />
+                        <SortHeader label="Cost" k="cost" wide />
+                        <SortHeader label="Switched on" k="enabled" wide />
+                        <th className="px-4 py-2.5"><span className="sr-only">Edit</span></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100">
@@ -265,7 +269,8 @@ export default function SourceBrowser() {
                           >
                             <td className="px-4 py-2.5">
                               <div className="flex flex-wrap items-center gap-2 font-medium">
-                                {s.name}
+                                <Link href={`/admin/sources/${s.source_id}`} onClick={(e) => e.stopPropagation()}
+                                  className="hover:underline">{s.name}</Link>
                                 {owed && (
                                   <span className="bg-neutral-100 px-1.5 py-0.5 text-[11px] font-normal text-ink"
                                     title="The next collection carries on where it stopped. Raise the page budget or narrow the search to finish sooner.">
@@ -273,26 +278,32 @@ export default function SourceBrowser() {
                                   </span>
                                 )}
                               </div>
-                              <div className="font-mono text-xs text-neutral-500">
+                              <div className="break-all font-mono text-xs text-neutral-500">
                                 {s.url}
                               </div>
+                              {/* on a phone, the other columns in one line */}
+                              <div className="mt-1 text-xs text-neutral-600 sm:hidden">
+                                {[ACCESS_LABELS[how], clusterName(s.cluster), COST_LABELS[s.cost] ?? s.cost,
+                                  how === "none" ? "not collectable" : s.enabled ? "On" : "Off"].join(" · ")}
+                              </div>
                             </td>
-                            <td className="px-4 py-2.5 text-sm" title={how === "none" ? s.note : undefined}>
+                            <td className="hidden px-4 py-2.5 text-sm sm:table-cell" title={how === "none" ? s.note : undefined}>
                               {how === "none" && <span aria-hidden className="mr-1">🔒</span>}
                               {ACCESS_LABELS[how]}
                               {how === "query" && s.adapter && (
                                 <span className="block font-mono text-[11px] text-neutral-500">{adapters[s.adapter] ?? s.adapter}</span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5">{clusterName(s.cluster)}</td>
-                            <td className="px-4 py-2.5">{COST_LABELS[s.cost] ?? s.cost}</td>
-                            <td className="px-4 py-2.5">
+                            <td className="hidden px-4 py-2.5 sm:table-cell">{clusterName(s.cluster)}</td>
+                            <td className="hidden px-4 py-2.5 sm:table-cell">{COST_LABELS[s.cost] ?? s.cost}</td>
+                            <td className="hidden px-4 py-2.5 sm:table-cell">
                               {how === "none" ? (
                                 <span className="font-mono text-[11px] text-neutral-400">not collectable</span>
                               ) : (
                                 <span className={`text-sm ${s.enabled ? "text-ink" : "text-muted"}`}>{s.enabled ? "On" : "Off"}</span>
                               )}
                             </td>
+                            <td className="px-4 py-2.5 text-right text-sm text-link">Edit</td>
                           </tr>
                         );
                       })}

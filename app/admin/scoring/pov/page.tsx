@@ -9,13 +9,15 @@ import type { Edition } from "@/components/frontier/items";
 import { PublishLink } from "@/components/LeadersSee";
 import { editionName } from "@/components/PublishEdition";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
 import StatusChip from "@/components/StatusChip";
 import { calls, writePovs } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
+import { useStoredStart, useStoredState } from "@/lib/paging";
 import { usePipeline } from "@/lib/pipeline";
-import { LEGEND } from "@/lib/scoring";
+import { LEGEND, HORIZON_TERM } from "@/lib/scoring";
 import { useTechLabel } from "@/lib/tech-labels";
 import { LIVE_DOT, PRIORITY } from "@/lib/theme";
 
@@ -30,11 +32,10 @@ type PovRow = {
   assessed_at: string | null; // the assessment it was written from
   sections?: { headline?: string };
   new_since_written: number | null;
+  views?: { opened: number; printed: number; last_opened: string | null } | null; // on the leaders' address
   placements: { fabric_id: string; fabric: string; priority: string | null; horizon: string | null;
     computed_priority?: string | null; override?: { priority: string; reason: string | null } | null }[];
 };
-
-type Waiting = { scoring_run_id: string; tech_id: string; technology: string; assessed_at: string };
 
 type Job = {
   _id: string;
@@ -47,12 +48,13 @@ type Job = {
   started_at: string;
 } | null;
 
-type Library = { povs: PovRow[]; uncomposed: Waiting[]; assessed: number; switched_off: number; job: Job };
+/** A page of the list (GET /scoring/povs?limit=…): `total` match the filters, of `count`; the
+ *  counts the page's lines use (`behind`, `unsent`, waiting) cover every one. */
+type Library = { povs: PovRow[]; total: number; count: number; behind: number; unsent: number;
+  fabrics: { id: string; name: string }[]; uncomposed_count: number; assessed: number; switched_off: number; job: Job };
 
-const PAGE = 24; // cards at a time; search and "Show more" appear once there are more
+const PAGE = 48; // cards a page (rows of 2, 3 or 4); search and the pager appear once there are more
 const PRIORITIES = ["P1", "P2", "P3", "P4", "P5", "P6"];
-/** A Point of View's best priority across its fabrics ("P9" when none is placed), for sorting. */
-const best = (pv: PovRow) => pv.placements.map((pl) => pl.priority ?? "P9").sort()[0] ?? "P9";
 const field = "rounded-full border border-line bg-white px-3 py-1.5 text-sm text-ink";
 
 function PovLibrary() {
@@ -61,41 +63,43 @@ function PovLibrary() {
   const p = usePipeline();
   const [data, setData] = useState<Library | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [q, setQ] = useState("");
-  const [shown, setShown] = useState(PAGE);
-  const [sort, setSort] = useState<"priority" | "newest">("priority");
-  const [fabric, setFabric] = useState("");
-  const [priority, setPriority] = useState("");
-  const [newer, setNewer] = useState(false);
+  // the search, filters and page are kept for the tab: coming back shows the same cards
+  const [q, setQ] = useStoredState("povs:q", "");
+  const [start, setStart] = useStoredStart("povs");
+  const [sort, setSort] = useStoredState<"priority" | "newest">("povs:sort", "priority");
+  const [fabric, setFabric] = useStoredState("povs:fabric", "");
+  const [priority, setPriority] = useStoredState("povs:priority", "");
+  const [newer, setNewer] = useStoredState("povs:newer", false);
+  const [onlyUnsent, setOnlyUnsent] = useStoredState("povs:unsent", false); // written after the edition leaders see
   const [edition, setEdition] = useState<Edition | null | undefined>(undefined); // the one leaders see; null: none yet
 
-  const load = useCallback(
-    () => fetchJson<Library>("/api/scoring/povs").then((d) => { setData(d); setError(null); }).catch(setError),
-    [],
-  );
-  // reload as the writing job moves on, and when Points of View come or go
+  // a page of cards from the server, filtered and sorted there; asked again when a filter or
+  // the page changes, as the writing job moves on, and when Points of View come or go
+  const [shownFrom, setShownFrom] = useState(0);
   const job = p?.pov.job;
-  useEffect(() => { load(); }, [load, job?.done, job?.status, p?.pov.composed, p?.pov.pending]);
+  const moved = `${job?.done}:${job?.status}:${p?.pov.composed}:${p?.pov.pending}`;
+  const load = useCallback(() => {
+    const ask = (skip: number) => fetchJson<Library>(`/api/scoring/povs?${new URLSearchParams({
+      limit: String(PAGE), skip: String(skip), sort, q: q.trim(), ...(fabric ? { fabric } : {}), ...(priority ? { priority } : {}),
+      ...(newer ? { newer: "true" } : {}), ...(onlyUnsent ? { unsent: "true" } : {}) })}`);
+    const lastOf = (total: number) => Math.floor((total - 1) / PAGE) * PAGE;
+    return ask(start)
+      // the kept page is past the end now (the list grew shorter meanwhile): its last page
+      .then((d) => (d.povs.length === 0 && d.total > 0 ? ask(lastOf(d.total)).then((l) => ({ d: l, at: lastOf(d.total) })) : { d, at: start }))
+      .then(({ d, at }) => { setData(d); setShownFrom(at); setError(null); })
+      .catch(setError);
+  }, [start, sort, q, fabric, priority, newer, onlyUnsent]);
+  useEffect(() => { load(); }, [load, moved]);
   useEffect(() => {
     fetchJson<{ editions: Edition[] }>("/api/editions").then((d) => setEdition(d.editions[0] ?? null)).catch(() => setEdition(undefined));
   }, []);
 
   const povs = data?.povs ?? [];
-  const needle = q.trim().toLowerCase();
-  const fabrics = [...new Map(povs.flatMap((pv) => pv.placements).map((pl) => [pl.fabric_id, pl.fabric])).entries()]
-    .sort((x, y) => x[1].localeCompare(y[1]));
-  const matching = povs
-    .filter((pv) => !needle || `${label(pv.technology)} ${pv.sections?.headline ?? ""}`.toLowerCase().includes(needle))
-    .filter((pv) => !fabric || pv.placements.some((pl) => pl.fabric_id === fabric
-      && (!priority || (priority === "none" ? !pl.priority : pl.priority === priority))))
-    .filter((pv) => fabric || !priority || pv.placements.some((pl) => priority === "none" ? !pl.priority : pl.priority === priority))
-    .filter((pv) => !newer || (pv.new_since_written ?? 0) > 0)
-    .sort((x, y) => sort === "newest" ? y.composed_at.localeCompare(x.composed_at)
-      : best(x).localeCompare(best(y)) || label(x.technology).localeCompare(label(y.technology)));
-  const behind = povs.filter((pv) => (pv.new_since_written ?? 0) > 0).length;
-  const unsent = edition ? povs.filter((pv) => pv.composed_at > edition.published_at).length : 0; // written after it
-  const reset = () => setShown(PAGE);
-  const waiting = data?.uncomposed ?? [];
+  const fabrics = (data?.fabrics ?? []).map((f) => [f.id, f.name] as [string, string]);
+  const unsent = edition ? data?.unsent ?? 0 : 0; // written after the edition leaders see
+  const behind = data?.behind ?? 0;
+  const reset = () => setStart(0); // another search or filter starts at the first cards
+  const waiting = data?.uncomposed_count ?? 0;
   const running = data?.job?.status === "running" ? data.job : null;
   const failed = new Set((data?.job?.failed ?? []).map((f) => f.tech_id));
 
@@ -145,7 +149,7 @@ function PovLibrary() {
         </div>
       )}
 
-      {data && povs.length > 0 && (
+      {data && data.count > 0 && (
         <section aria-label="Keeping them current" className="mt-4 rounded-card border border-line bg-white px-5 py-3 text-sm">
           <h2 className="font-semibold">Keeping them current</h2>
           <ul className="mt-1 space-y-1.5">
@@ -153,18 +157,21 @@ function PovLibrary() {
               <li className="flex flex-wrap items-baseline gap-x-3">
                 {!edition ? <span>Nothing is published yet: leaders see none of these until the first edition.</span>
                   : <span>Leaders see these as {editionName(edition)} holds them{unsent
-                    ? `: ${unsent === 1 ? "1 was" : `${unsent} were`} written after it, so leaders don't see ${unsent === 1 ? "that version" : "those versions"} yet.`
+                    ? <>: <button type="button" className="text-link underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                        aria-pressed={onlyUnsent} onClick={() => { setOnlyUnsent(!onlyUnsent); reset(); }}>
+                        {unsent === 1 ? "1 was" : `${unsent} were`} written after it</button>, so leaders don&apos;t see{" "}
+                        {unsent === 1 ? "that version" : "those versions"} yet{onlyUnsent ? " (only they show below)" : ""}.</>
                     : "; none was written after it."}</span>}
                 {(!edition || unsent > 0) && <PublishLink>Publish on the Briefing →</PublishLink>}
               </li>
             )}
             <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              {waiting.length > 0 ? <>
-                <span>{plural(waiting.length, "technology has", "technologies have")} a newer assessment than its Point of View
+              {waiting > 0 ? <>
+                <span>{plural(waiting, "technology has", "technologies have")} a newer assessment than its Point of View
                   (or none yet).</span>
-                <ConfirmAction label="Write them" secondary cost={calls(waiting.length)} confirmLabel="Write" doneLabel="Started"
+                <ConfirmAction label="Write them" secondary cost={calls(waiting)} confirmLabel="Write" doneLabel="Started"
                   disabled={running ? "Points of View are being written." : null}
-                  question={`Write ${plural(waiting.length, "Point of View", "Points of View")} from the latest assessments? About ${plural(waiting.length, "model call")}.`}
+                  question={`Write ${plural(waiting, "Point of View", "Points of View")} from the latest assessments? About ${plural(waiting, "model call")}.`}
                   onConfirm={async () => { await writePovs(false); await load(); }} />
                 <Link href="/admin/technologies?state=no_pov" className="text-link hover:underline">See them →</Link>
               </> : <span className="text-muted">Every Point of View is written from its technology&apos;s latest assessment.</span>}
@@ -180,7 +187,7 @@ function PovLibrary() {
               <li className="flex flex-wrap items-baseline gap-x-3 text-muted">
                 <span>Or write every one again, for instance after the Point of View skill changes.</span>
                 <ConfirmAction label="Rewrite all" secondary cost={calls(data.assessed)}
-                  question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology that's switched on, from its latest assessment${waiting.length ? `, including the ${waiting.length} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
+                  question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology that's switched on, from its latest assessment${waiting ? `, including the ${waiting} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
                   confirmLabel="Rewrite" doneLabel="Started" disabled={running ? "Points of View are being written." : null}
                   onConfirm={async () => { await writePovs(true); await load(); }} />
               </li>
@@ -192,7 +199,7 @@ function PovLibrary() {
       {data && (
         <div className="mt-5 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            {povs.length > PAGE && (
+            {data.count > PAGE && (
               <input type="search" value={q} placeholder="Search by technology or headline" aria-label="Search Points of View"
                 onChange={(e) => { setQ(e.target.value); reset(); }}
                 className="min-w-0 flex-1 basis-64 rounded-full border border-line bg-white px-4 py-1.5 text-sm outline-none focus:border-neutral-400" />
@@ -210,6 +217,12 @@ function PovLibrary() {
               {PRIORITIES.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
               <option value="none">No priority</option>
             </select>
+            {unsent > 0 && (
+              <label className="flex items-center gap-1.5 text-sm">
+                <input type="checkbox" checked={onlyUnsent} onChange={(e) => { setOnlyUnsent(e.target.checked); reset(); }} />
+                Only those not in the edition ({unsent})
+              </label>
+            )}
             {behind > 0 && (
               <label className="flex items-center gap-1.5 text-sm">
                 <input type="checkbox" checked={newer} onChange={(e) => { setNewer(e.target.checked); reset(); }} />
@@ -218,7 +231,7 @@ function PovLibrary() {
             )}
           </div>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,26rem),1fr))] gap-3">
-            {matching.slice(0, shown).map((pv) => (
+            {povs.map((pv) => (
               <Link key={pv._id} href={withFrom(`/admin/scoring/pov/${pv.scoring_run_id}/${pv.tech_id}`, here)}
                 className="block rounded-card border border-line bg-white px-5 py-4 hover:border-neutral-400">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -226,7 +239,14 @@ function PovLibrary() {
                   <span className="text-xs text-neutral-500">
                     Written {formatDay(pv.composed_at)}
                     {pv.assessed_at && ` · from the ${formatDay(pv.assessed_at)} assessment`}
+                    {pv.views?.opened ? ` · leaders opened it ${plural(pv.views.opened, "time")}` : ""}
                   </span>
+                  {edition && pv.composed_at > edition.published_at && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900"
+                      title="Written after the edition leaders see: the next Publish sends it">
+                      Not in {editionName(edition)}
+                    </span>
+                  )}
                   {(pv.new_since_written ?? 0) > 0 && (
                     <span className="rounded-full bg-azure/10 px-2 py-0.5 text-xs text-ink">
                       New since written: {plural(pv.new_since_written!, "page")}
@@ -260,7 +280,7 @@ function PovLibrary() {
                           </span>
                         )}
                         {pl.override && <span className="text-[11px] text-amber-900">set by a person</span>}
-                        {pl.horizon && <span className="font-mono text-[11px] text-neutral-500">{pl.horizon}</span>}
+                        {pl.horizon && <span className="text-[11.5px] text-neutral-500">{pl.horizon}, {HORIZON_TERM[pl.horizon] ?? ""}</span>}
                       </span>
                     ))}
                   </div>
@@ -268,21 +288,14 @@ function PovLibrary() {
               </Link>
             ))}
           </div>
-          {matching.length > shown && (
-            <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-              <button type="button" onClick={() => setShown(shown + PAGE)}
-                className="rounded-full border border-line bg-white px-4 py-1.5 text-ink hover:bg-ground">
-                Show {Math.min(PAGE, matching.length - shown)} more
-              </button>
-              {shown} of {matching.length} shown
-            </div>
-          )}
-          {povs.length === 0 && (
+          <Pager start={shownFrom} total={data.total} size={PAGE} go={setStart}
+            shorter={start > shownFrom} what="Points of View" />
+          {data.count === 0 && (
             <p className="rounded-card border border-line bg-white px-5 py-6 text-sm text-neutral-500">
               No Points of View written yet.
             </p>
           )}
-          {povs.length > 0 && matching.length === 0 && (
+          {data.count > 0 && data.total === 0 && (
             <p className="text-sm text-muted">Nothing matches: clear the search or a filter.</p>
           )}
           {(data.switched_off ?? 0) > 0 && (

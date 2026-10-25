@@ -8,7 +8,7 @@ import { type Gap, type Job, type JobResult, type Preview, forGap, startJob, use
 import { formatAt, plural } from "@/lib/format";
 
 const LABELS: Record<Gap["kind"], string> = {
-  technology: "Find evidence", measure: "Find evidence for this measure", use_case: "Find use cases", link: "Add a link" };
+  technology: "Find evidence", measure: "Find evidence for this measure", use_case: "Find use cases", link: "Add a link", links: "Add evidence" };
 
 /** "Find evidence": a web search for one gap, the new pages read like any
  *  collected page, and only the gap's call run again. The cost shows first;
@@ -71,7 +71,7 @@ function Past({ jobs, error }: { jobs: Job[]; error: string | null }) {
   const [last] = jobs;
   return (
     <span className="block text-[12.5px]">
-      <span className="text-muted">{last.searched === false ? "Link added" : "Searched"} {formatAt(last.at, last.tz)}: </span>
+      <span className="text-muted">{last.gap.kind === "links" ? "Evidence added" : last.searched === false ? "Link added" : "Searched"} {formatAt(last.at, last.tz)}: </span>
       <JobLine job={last} failed={failedWords(last)} />{" "}
       <button type="button" onClick={() => setOpen(!open)} className="text-link hover:underline">
         {open ? "Hide" : jobs.length > 1 ? `What was found (all ${jobs.length})` : "What was found"}
@@ -81,13 +81,15 @@ function Past({ jobs, error }: { jobs: Job[]; error: string | null }) {
           {jobs.map((j) => (
             <span key={j._id} className="block">
               <span className="block text-muted">
-                {formatAt(j.at, j.tz)} · {j.searched === false ? "a pasted link" : <>searched &ldquo;{j.query}&rdquo;</>}
+                {formatAt(j.at, j.tz)} · {j.gap.kind === "links" ? "links and files added by hand"
+                  : j.searched === false ? "a pasted link" : <>searched &ldquo;{j.query}&rdquo;</>}
               </span>
               {j !== last && <span className="block"><JobLine job={j} failed={failedWords(j)} /></span>}
               {j.results.map((r) => (
                 <span key={r.url} className="block">
-                  <a href={r.url} target="_blank" rel="noreferrer" className="text-link hover:underline">{r.title || site(r.url)}</a>
-                  {r.title && <span className="text-muted"> ({site(r.url)})</span>} — <Status r={r} />
+                  {r.url.startsWith("upload:") ? <>{r.title} <span className="text-muted">(uploaded)</span></> : <>
+                    <a href={r.url} target="_blank" rel="noreferrer" className="text-link hover:underline">{r.title || site(r.url)}</a>
+                    {r.title && <span className="text-muted"> ({site(r.url)})</span>}</>} — <Status r={r} />
                 </span>
               ))}
             </span>

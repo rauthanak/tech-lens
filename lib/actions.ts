@@ -2,7 +2,7 @@
 
 import { fetchJson, sendJson } from "@/lib/api";
 import { plural } from "@/lib/format";
-import { refreshPipeline } from "@/lib/pipeline";
+import { refreshPipeline, type Offer } from "@/lib/pipeline";
 
 // The actions that start work, each written once: every button that starts
 // one shows its cost first (ConfirmAction) and refreshes the pipeline after.
@@ -35,6 +35,26 @@ export async function startAssessment(techIds: string[]): Promise<string> {
   const run = await sendJson<{ scoring_run_id: string }>("/api/scoring/runs", "POST", { technologies: techIds });
   await refreshPipeline();
   return run.scoring_run_id;
+}
+
+/** Assess an offered set: the server picks them (the first run's worth, when there are more). */
+export async function assessSet(select: "new_evidence" | "ready"): Promise<string> {
+  const run = await sendJson<{ scoring_run_id: string }>("/api/scoring/runs", "POST", { select });
+  await refreshPipeline();
+  return run.scoring_run_id;
+}
+
+/** The model calls assessing an offered set costs now: its first run's, when it takes more than one. */
+export const runCalls = (o: Offer) => o.run?.calls ?? o.calls;
+
+/** The question before assessing an offered set (`what`: "with new pages", "ready to assess"). */
+export function assessQuestion(o: Offer, what: string, note = ""): string {
+  const them = plural(o.count, "technology", "technologies");
+  if (!o.run)
+    return `Assess ${them} ${what}? About ${plural(o.calls, "model call")}${o.calls_max ? ` (up to ${o.calls_max.toLocaleString()})` : ""}${note}.`;
+  return `${them} ${what}. One run takes ${o.run.count.toLocaleString()}, those with the most pages: about ` +
+    `${plural(o.run.calls, "model call")}${note}. The other ${(o.count - o.run.count).toLocaleString()} stay waiting for ` +
+    `the next run. Assess the first ${o.run.count.toLocaleString()}?`;
 }
 
 export async function resumeAssessment(runId: string): Promise<void> {

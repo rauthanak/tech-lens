@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
@@ -10,13 +11,14 @@ import PageHeader from "@/components/PageHeader";
 import StatusChip from "@/components/StatusChip";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { fetchJson } from "@/lib/api";
-import { duration, formatAt, plural } from "@/lib/format";
+import { duration, formatAt, plural, collectedLabel } from "@/lib/format";
 import { stageWord, usePipeline } from "@/lib/pipeline";
 import type { RunUsage } from "@/lib/usage";
 
 type RunRow = {
   id: string;
   status: string;
+  failed_sources?: number;
   stage?: string;
   run_start_date_time: string;
   run_end_date_time: string | null;
@@ -78,10 +80,10 @@ export default function RunsPage() {
               <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                 <th className="px-4 py-2.5 font-medium">Started</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium">Took</th>
-                <th className="px-4 py-2.5 font-medium">Sources</th>
-                <th className="px-4 py-2.5 font-medium">Pages saved · new or changed</th>
-                <th className="px-4 py-2.5 font-medium" title="Pages set aside are kept, but not used for technologies or assessments">
+                <th className="hidden px-4 py-2.5 font-medium sm:table-cell">Took</th>
+                <th className="hidden px-4 py-2.5 font-medium sm:table-cell">Sources</th>
+                <th className="hidden px-4 py-2.5 font-medium sm:table-cell">Pages saved · new or changed</th>
+                <th className="hidden px-4 py-2.5 font-medium sm:table-cell" title="Pages set aside are kept, but not used for technologies or assessments">
                   Findings · pages set aside
                 </th>
               </tr>
@@ -98,11 +100,18 @@ export default function RunsPage() {
                 <tr key={r.id} onClick={() => router.push(`/admin/runs/${r.id}`)}
                   className="cursor-pointer hover:bg-neutral-50">
                   <td className="px-4 py-2.5">
-                    {formatAt(r.run_start_date_time)}
+                    <Link href={`/admin/runs/${r.id}`} onClick={(e) => e.stopPropagation()} className="font-medium hover:underline">
+                      {formatAt(r.run_start_date_time)} <span aria-hidden className="text-link">→</span>
+                    </Link>
                     <Hood><span className="ml-2 font-mono text-xs text-neutral-500">{r.id}</span></Hood>
+                    {/* on a phone, the other columns in one line */}
+                    <span className="mt-0.5 block text-xs text-neutral-600 sm:hidden">
+                      {plural(r.totals?.sources ?? 0, "source")} · {(r.totals?.new_documents ?? 0).toLocaleString()} new or changed pages
+                      {r.totals?.signals !== undefined && ` · ${plural(r.totals.signals + (r.totals.other_signals ?? 0), "finding")}`}
+                    </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <StatusChip status={r.status} />
+                    <StatusChip status={r.status} label={collectedLabel(r.status, r.failed_sources)} />
                     {(r.status === "running" || r.status === "terminating") && r.stage && (
                       <span className="ml-2 font-mono text-[11px]">{stageWord(r.stage)}</span>
                     )}
@@ -113,15 +122,15 @@ export default function RunsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs">
+                  <td className="hidden px-4 py-2.5 font-mono text-xs sm:table-cell">
                     {duration(r.run_start_date_time, r.run_end_date_time)}
                   </td>
-                  <td className="px-4 py-2.5">{r.totals?.sources ?? 0}</td>
-                  <td className="px-4 py-2.5">
+                  <td className="hidden px-4 py-2.5 sm:table-cell">{r.totals?.sources ?? 0}</td>
+                  <td className="hidden px-4 py-2.5 sm:table-cell">
                     {(r.totals?.documents ?? 0).toLocaleString()}
                     <span className="text-neutral-500"> · {(r.totals?.new_documents ?? 0).toLocaleString()} new or changed</span>
                   </td>
-                  <td className="px-4 py-2.5 text-xs">
+                  <td className="hidden px-4 py-2.5 text-xs sm:table-cell">
                     {r.totals?.signals === undefined ? "—" : (
                       <>
                         {plural(r.totals.signals + (r.totals.other_signals ?? 0), "finding")}

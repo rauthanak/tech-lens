@@ -11,18 +11,21 @@ import FabricLabel from "@/components/FabricLabel";
 import Hood from "@/components/Hood";
 import ModelUse from "@/components/ModelUse";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
 import StageFlow from "@/components/StageFlow";
 import StatusChip from "@/components/StatusChip";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { calls, resumeAssessment } from "@/lib/actions";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
-import { formatAt, formatDay, plural } from "@/lib/format";
+import { formatAt, plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
 import { useHere, withFrom } from "@/lib/here";
 import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
-import { formatScore, LEGEND } from "@/lib/scoring";
+import { formatScore, LEGEND, SCORE_NAMES } from "@/lib/scoring";
 import { useTechLabel } from "@/lib/tech-labels";
 import { PRIORITY, scoreShade } from "@/lib/theme";
+import { PAGE_SIZE, useStoredState } from "@/lib/paging";
+import { everyVisible } from "@/lib/visible";
 
 const SCORING_STAGES = ["preparing", "scoring", "done"];
 
@@ -65,14 +68,19 @@ type Run = {
   started_at: string;
   finished_at?: string;
   error?: string | null;
-  assessments: Assessment[];
+  // about the whole run (its rows come from /rows, a page at a time)
+  assessed: number;
+  fabrics: { id: string; name: string }[];
+  evidence_runs: string[] | null; // null: older assessments didn't record them
+  left: string[];                 // not assessed nor skipped: what Resume would do
 };
 
-const AXES: { key: string; label: string; short: string }[] = [
-  { key: "market_potential", label: "Market Potential", short: "Market" },
-  { key: "strategic_fit", label: "Strategic Fit", short: "Strategic" },
-  { key: "adoption_readiness", label: "Adoption Readiness", short: "Adoption" },
-];
+/** A page of the run's table (GET /scoring/runs/{id}/rows): `scoped` rows after the fabric and
+ *  search, `total` after the grid cell too, and the grid's counts by cell over the scoped ones. */
+type Rows = { rows: Assessment[]; total: number; scoped: number; grid: Record<string, number> };
+
+const AXES: { key: string; label: string; short: string }[] = Object.entries(SCORE_NAMES)
+  .map(([key, label]) => ({ key, label, short: label.split(" ")[0] })); // "Market", "Strategic", "Adoption"
 
 // scored alongside the three scores; their codes show only under Technical details
 const EXTRAS: { code: string; short: string; label: string }[] = [
@@ -81,7 +89,7 @@ const EXTRAS: { code: string; short: string; label: string }[] = [
   { code: "X3", short: "Gap", label: "Capability gap: outside the three scores, feeds the Point of View" },
 ];
 
-const TIMELINE_COLS = ["near", "mid", "far"] as const;
+const TIMELINE_COLS = ["far", "mid", "near"] as const; // sooner to the right, as on the leaders' grid: P1 top-right
 const POTENTIAL_ROWS = ["high", "mid", "low"] as const;
 
 type Named = { code: string; name: string };
@@ -113,7 +121,7 @@ function ScoringRun() {
   const [fabric, setFabric] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [axisView, setAxisView] = useState<"priority" | "priority_by_disruptiveness">("priority");
-  const [prioFilter, setPrioFilter] = useState<string | null>(null);
+  const [cellFilter, setCellFilter] = useState<string | null>(null); // "near_high": a grid cell
   const [gridMeta, setGridMeta] = useState<{
     cells: Record<string, string>;
     timelineFrom: Named[]; potentialFrom: Named[]; tCuts: number[]; pCuts: number[];
@@ -121,8 +129,8 @@ function ScoringRun() {
   const [sortKey, setSortKey] = useState<string>("market_potential");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   // table pagination — big runs stay snappy; a new filter goes back to page one
-  const [paging, setPaging] = useState({ filter: "", shown: 50 });
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // the table's page, kept for the tab per run; another fabric, search or cell starts at the top
+  const [paging, setPaging] = useStoredState(`run-table:${id}`, { filter: "", start: 0 });
   const hood = useHood();
   // a measure's name, with its code under Technical details
   const named = (list: Named[]) => list.map((m) => (hood && m.code ? `${m.code} ${m.name}` : m.name));
@@ -139,9 +147,7 @@ function ScoringRun() {
     return fetchJson<Run>(`/api/scoring/runs/${id}`)
       .then((d) => {
         loadedOnce.current = true;
-        // an override is the priority in force: the grid, filters and sort use it
-        setRun({ ...d, assessments: d.assessments.map((a) => a.override && a.placement
-          ? { ...a, placement: { ...a.placement, priority: a.override.priority } } : a) });
+        setRun(d);
         setError(null);
       })
       // a poll timing out during a heavy scoring burst is not "backend down" —
@@ -181,11 +187,7 @@ function ScoringRun() {
   const stopped = run?.status === "failed" || run?.status === "terminated";
 
   // what resuming would cost: the technologies the run hasn't assessed yet
-  const left = useMemo(() => {
-    if (!run || !stopped) return [];
-    const done = new Set([...run.assessments.map((a) => a.tech_id), ...(run.skipped ?? []).map((x) => x.tech_id)]);
-    return run.technologies.filter((t) => !done.has(t.tech_id)).map((t) => t.tech_id);
-  }, [run, stopped]);
+  const left = useMemo(() => (run && stopped ? run.left : []), [run, stopped]);
   useEffect(() => {
     if (!left.length) return;
     fetchJson<{ technologies: number; calls: number }>(`/api/scoring/preview?technologies=${left.join(",")}`)
@@ -194,60 +196,36 @@ function ScoringRun() {
   }, [left]);
 
   useEffect(() => {
-    if (running && !timer.current) timer.current = setInterval(load, 5000);
-    if (!running && timer.current) {
-      clearInterval(timer.current);
-      timer.current = null;
-    }
-    return () => {
-      if (timer.current) {
-        clearInterval(timer.current);
-        timer.current = null;
-      }
-    };
+    if (!running) return;
+    return everyVisible(load, 5000); // while the run goes on and the tab is visible
   }, [running, load]);
 
-  const fabrics = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const a of run?.assessments ?? []) seen.set(a.fabric_id, a.fabric);
-    return [...seen.entries()];
-  }, [run]);
+  const fabrics = useMemo(() => (run?.fabrics ?? []).map((f) => [f.id, f.name] as [string, string]), [run]);
 
-  const scoped = useMemo(() => {
-    let list = run?.assessments ?? [];
-    if (fabric !== "all") list = list.filter((a) => a.fabric_id === fabric);
-    const q = query.trim().toLowerCase();
-    if (q) list = list.filter((a) => a.technology.includes(q));
-    return list;
-  }, [run, fabric, query]);
-
-  const gridCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const a of scoped) {
-      const p = a.placement?.[axisView];
-      if (p) counts[p] = (counts[p] ?? 0) + 1;
-    }
-    return counts;
-  }, [scoped, axisView]);
-
-  const rows = useMemo(() => {
-    let list = scoped;
-    if (prioFilter) list = list.filter((a) => a.placement?.[axisView] === prioFilter);
-    const val = (a: Assessment) =>
-      sortKey === "technology" ? a.technology
-      : sortKey === "docs" ? a.doc_count
-      : sortKey === "priority" ? Number((a.placement?.[axisView] ?? "P9").slice(1))
-      : sortKey === "horizon" ? (a.placement?.horizon ?? "H9")
-      : sortKey.startsWith("X") ? (a.extras?.[sortKey] ?? -1)
-      : (a.tora?.[sortKey]?.score ?? -1);
-    return [...list].sort((x, y) => {
-      const a = val(x), b = val(y);
-      return (a < b ? -1 : a > b ? 1 : 0) * sortDir;
-    });
-  }, [scoped, prioFilter, axisView, sortKey, sortDir]);
-
-  const filterKey = `${fabric}|${query}|${prioFilter}`;
-  const shown = paging.filter === filterKey ? paging.shown : 50;
+  // the table, a page at a time: the server filters, counts the grid by cell (how-soon band ×
+  // how-big or threat band: several cells share a priority), sorts and pages; it's asked again
+  // when a filter, the sort or the page changes, and while the run goes on, when a technology finishes
+  const filterKey = `${fabric}|${query}|${cellFilter}`;
+  const wanted = paging.filter === filterKey ? paging.start : 0;
+  const [table, setTable] = useState<Rows | null>(null);
+  const [from, setFrom] = useState(0);
+  const finished = `${run?.progress?.techs_done ?? 0}:${run?.status ?? ""}`;
+  useEffect(() => {
+    const ask = (skip: number) => fetchJson<Rows>(`/api/scoring/runs/${id}/rows?${new URLSearchParams({
+      ...(fabric !== "all" ? { fabric } : {}), q: query.trim(), axis: axisView, ...(cellFilter ? { cell: cellFilter } : {}),
+      sort: sortKey, dir: String(sortDir), skip: String(skip), limit: String(PAGE_SIZE) })}`);
+    const lastOf = (total: number) => Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE;
+    let live = true;
+    ask(wanted)
+      // the kept page is past the end now (the list got shorter): its last page
+      .then((d) => (d.rows.length === 0 && d.total > 0
+        ? ask(lastOf(d.total)).then((last) => ({ d: last, at: lastOf(d.total) })) : { d, at: wanted }))
+      .then(({ d, at }) => { if (live) { setTable(d); setFrom(at); } })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [id, fabric, query, axisView, cellFilter, sortKey, sortDir, wanted, finished]);
+  const gridCounts = table?.grid ?? {};
+  const rows = table?.rows ?? [];
 
   function sortBy(key: string) {
     if (sortKey === key) setSortDir((d) => (d === 1 ? -1 : 1));
@@ -274,7 +252,7 @@ function ScoringRun() {
   return (
     <div>
       <BackLink fallback="/admin/scoring/assessments" />
-      <PageHeader eyebrow="Assessment run" title={run ? `Assessment run · ${formatDay(run.started_at)}` : "Assessment run"} right={<TechnicalDetailsSwitch />}
+      <PageHeader eyebrow="Assessment run" title={run ? `Assessment run · ${formatAt(run.started_at)} · ${plural(run.progress?.techs_total ?? run.technologies?.length ?? 0, "technology", "technologies")}` : "Assessment run"} right={<TechnicalDetailsSwitch />}
         intro="Where each technology in this run landed, fabric by fabric, and its scores."
         help={<>
           <li>One row per technology and fabric. Market, Strategic and Adoption are the three headline scores
@@ -323,7 +301,7 @@ function ScoringRun() {
                 disabled={resumeBlocked}
                 onConfirm={async () => { await resumeAssessment(id); setNotice({ text: "Resumed: finishing the missing work.", failed: false }); load(); }} />
             )}
-            {!running && run.assessments.length > 0 && (
+            {!running && run.assessed > 0 && (
 <ConfirmAction label="Redo scores" cost="no model calls" secondary confirmLabel="Redo"
                 question="Work out the three scores and the priorities again from the stored measure scores, with today's weights and cut-points? No model calls. Priorities may move; leaders see that only after the next publish."
                 onConfirm={() => act(`/api/scoring/runs/${id}/recompute`, "Scores and priorities redone with today's weights and cut-points.", "Scores not redone")} />
@@ -336,9 +314,9 @@ function ScoringRun() {
       {error != null && <BackendError error={error} />}
       {run?.error && <p className="mt-3 font-mono text-xs text-failed">{run.error}</p>}
 
-      {run && run.assessments.length > 0 && <EvidenceLine assessments={run.assessments} />}
+      {run && run.assessed > 0 && <EvidenceLine assessments={[run.evidence_runs ? { evidence_runs: run.evidence_runs } : {}]} />}
 
-      {run && run.assessments.length === 0 && (run.stage_history?.length ?? 0) > 0 && (
+      {run && run.assessed === 0 && (run.stage_history?.length ?? 0) > 0 && (
         <Hood>
           <div className="mt-5 w-52 rounded-card border border-line bg-white px-5 py-4">
             <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
@@ -354,7 +332,7 @@ function ScoringRun() {
         </Hood>
       )}
 
-      {run && run.assessments.length > 0 && (
+      {run && run.assessed > 0 && (
         <div className="mt-5 flex flex-wrap items-center gap-2">
           {/* "all" has no fabric colour, so it shows as the neutral pill */}
           {[["all", "All fabrics"] as [string, string], ...fabrics].map(([fid, label]) => (
@@ -375,7 +353,7 @@ function ScoringRun() {
         </div>
       )}
 
-      {run && run.assessments.length > 0 && (
+      {run && run.assessed > 0 && (
         <div className="mt-4 flex flex-wrap items-start gap-6 rounded-card border border-line bg-white px-5 py-4">
           <div>
             <div className="flex items-center gap-3">
@@ -383,7 +361,7 @@ function ScoringRun() {
                 Priority grid
               </span>
               {(["priority", "priority_by_disruptiveness"] as const).map((v) => (
-                <button key={v} onClick={() => { setAxisView(v); setPrioFilter(null); }}
+                <button key={v} onClick={() => { setAxisView(v); setCellFilter(null); }}
                   className={`rounded-full px-2 py-0.5 text-xs ${
                     axisView === v ? "bg-navy text-white"
                     : "border border-line text-neutral-600 hover:bg-neutral-100"}`}>
@@ -406,14 +384,15 @@ function ScoringRun() {
                     <tr key={r}>
                       <td className="pr-2 text-right font-mono text-[10px] uppercase text-neutral-500">{r}</td>
                       {TIMELINE_COLS.map((c) => {
-                        const p = gridMeta.cells[`${c}_${r}`];
-                        const n = gridCounts[p] ?? 0;
-                        const active = prioFilter === p;
+                        const cell = `${c}_${r}`;
+                        const p = gridMeta.cells[cell];
+                        const n = gridCounts[cell] ?? 0;
+                        const active = cellFilter === cell;
                         return (
                           <td key={c}>
                             <button
-                              onClick={() => setPrioFilter(active ? null : p)}
-                              title={`${p} — click to ${active ? "clear the" : "filter the table to this"} cell`}
+                              onClick={() => setCellFilter(active ? null : cell)}
+                              title={`${p}, ${c} and ${r}: click to ${active ? "clear the" : "filter the table to this"} cell`}
                               className={`h-11 w-16 text-center ${PRIORITY[p]} ${active ? "ring-2 ring-azure" : ""}`}
                             >
                               <span className="block font-mono text-[10px]">{p}</span>
@@ -429,7 +408,7 @@ function ScoringRun() {
             )}
           </div>
           <div className="min-w-64 flex-1 space-y-3 text-[13px] leading-relaxed text-neutral-600">
-            {axisView === "priority_by_disruptiveness" && scoped.length > 0 && Object.keys(gridCounts).length === 0 && (
+            {axisView === "priority_by_disruptiveness" && (table?.scoped ?? 0) > 0 && Object.keys(gridCounts).length === 0 && (
               <p className="text-ink">
                 Empty: Tata hasn&apos;t entered the Disruption threat for {fabric === "all" ? "these technologies" : "this fabric"} yet.
               </p>
@@ -485,10 +464,10 @@ function ScoringRun() {
             <p className="text-xs text-neutral-500">
               Click a cell to filter the table below; hover a priority in the table
               for that row&apos;s arithmetic.
-              {prioFilter && (
-                <button onClick={() => setPrioFilter(null)}
+              {cellFilter && gridMeta && (
+                <button onClick={() => setCellFilter(null)}
                   className="ml-2 rounded-full border border-line px-1.5 py-0.5 text-[11px] hover:bg-neutral-100">
-                  clear {prioFilter}
+                  clear {gridMeta.cells[cellFilter]} ({cellFilter.replace("_", ", ")})
                 </button>
               )}
             </p>
@@ -511,11 +490,13 @@ function ScoringRun() {
         </div>
       )}
 
-      {run && (
-        <div className="mt-3 overflow-hidden rounded-card border border-line bg-white">
-          <table className="w-full table-fixed border-collapse text-sm">
+      {run && (<>
+        <p className="mt-3 text-xs text-muted sm:hidden">Swipe the table sideways for the scores; the technology stays put.</p>
+        {/* on a narrow screen it scrolls sideways, the technology column pinned on the left */}
+        <div className="mt-3 overflow-x-auto rounded-card border border-line bg-white">
+          <table className="w-full min-w-[860px] table-fixed border-collapse text-sm">
             <colgroup>
-              <col />
+              <col className="w-56 sm:w-auto" />
               {fabric === "all" && <col className="w-28" />}
               <col className="w-28" />
               <col className="w-28" />
@@ -529,7 +510,7 @@ function ScoringRun() {
             </colgroup>
             <thead>
               <tr className="border-b border-neutral-200 font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-                <th className="cursor-pointer px-4 py-2.5 text-left font-normal hover:text-black"
+                <th className="sticky left-0 z-10 cursor-pointer bg-white px-4 py-2.5 text-left font-normal hover:text-black"
                   onClick={() => sortBy("technology")}>
                   Technology{arrow("technology")}
                 </th>
@@ -563,7 +544,7 @@ function ScoringRun() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {rows.slice(0, shown).map((a) => (
+              {rows.map((a) => (
                 <Row key={a._id} a={a} showFabric={fabric === "all"} axisView={axisView} here={here} off={off.has(a.tech_id)} />
               ))}
               {rows.length === 0 && (
@@ -571,7 +552,7 @@ function ScoringRun() {
                   <td colSpan={11} className="px-4 py-6 text-neutral-500">
                     {running
                       ? "Assessments appear here as each technology completes."
-                      : run.assessments.length === 0
+                      : run.assessed === 0
                         ? "No assessments were produced."
                         : "Nothing matches the filter."}
                   </td>
@@ -579,24 +560,22 @@ function ScoringRun() {
               )}
             </tbody>
           </table>
-          {rows.length > shown && (
+          {(table?.total ?? 0) > PAGE_SIZE && (
             <div className="border-t border-neutral-100 px-4 py-2.5">
-              <button
-                onClick={() => setPaging({ filter: filterKey, shown: shown + 50 })}
-                className="rounded-full border border-line bg-white px-3 py-1.5 text-sm hover:bg-neutral-100"
-              >
-                Show more ({shown} of {rows.length})
-              </button>
+              <Pager start={from} total={table!.total} go={(n) => setPaging({ filter: filterKey, start: n })}
+                shorter={wanted > from} what="rows" />
             </div>
           )}
         </div>
-      )}
+      </>)}
 
-      {run && run.assessments.length > 0 && (
+      {run && run.assessed > 0 && (
         <p className="mt-2 text-xs text-neutral-500">
           {LEGEND} &ldquo;partial&rdquo;: this average is built from fewer measures, because those without enough
           evidence are left out rather than counted as zero (hover any score for the counts). &ldquo;—&rdquo;: the
           evidence couldn&apos;t support a score. For Threat and Capture it means Tata hasn&apos;t entered one yet.
+          Threat: disruption threat; Capture: serviceable capture (both Tata enters); Gap: capability gap, outside the
+          three scores, used by the Point of View.
         </p>
       )}
 
@@ -652,7 +631,7 @@ function Row({ a, showFabric, axisView, here, off }: {
   return (
     <tr className="cursor-pointer hover:bg-neutral-50" title="Open this assessment's details"
       onClick={() => router.push(href)}>
-      <td className="truncate px-4 py-2 font-medium">
+      <td className="sticky left-0 z-10 truncate bg-white px-4 py-2 font-medium">
         <Link href={withFrom(`/admin/technologies/${a.tech_id}`, here)} onClick={(e) => e.stopPropagation()}
           className="hover:underline" title="Open the technology">
           {label(a.technology)}
@@ -665,8 +644,8 @@ function Row({ a, showFabric, axisView, here, off }: {
         )}
       </td>
       {showFabric && (
-        <td className="truncate px-3 py-2 font-mono text-[11px] uppercase text-neutral-500">
-          {a.fabric}
+        <td className="truncate px-3 py-2">
+          <FabricLabel id={a.fabric_id} name={a.fabric} />
         </td>
       )}
       {AXES.map(({ key }) => {

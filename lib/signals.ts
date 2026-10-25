@@ -38,6 +38,7 @@ export type SignalsResponse = {
   signals: SignalRow[];
   current_hash: string;
   stale_pages: number;
+  checkable_pages: number; // what any change to the list marks as not yet checked
   recheck: RecheckJob | null;
 };
 
@@ -66,6 +67,7 @@ export type FoundHit = Hit & {
   older: boolean; // its page was published more than 30 days before it was collected
   technologies: string[]; // the finding's own when it has them, otherwise its page's
   technology_ids: (string | null)[]; // aligned with technologies; null when not in the register
+  also?: { source: string; url: string }[]; // the same story on other pages (the Briefing's order groups copies)
 };
 
 /** GET /api/signals/found */
@@ -78,6 +80,7 @@ export type BriefingSummary = {
   counts: { findings: number; pages: number; older: number };
   types: { signal_id: string; name: string; count: number; older: number }[];
   freshness: { run_id: string; finished_at: string; sources: number; new_pages: number } | null;
+  updating_days?: number; // earlier days a Check again changed, still being brought up to date in the background
 };
 
 /** Why a page couldn't be analysed, wholly or in part (documents.analysis_error). */

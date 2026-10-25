@@ -19,6 +19,9 @@ function running(p: Pipeline): string[] {
   if (check?.status === "running")
     out.push(check.stage === "organizing technologies" ? organizing : `Checking pages · ${check.done} of ${check.total}`);
   if (p.technologies.resolve_status === "running" && !out.includes(organizing)) out.push(organizing);
+  if (p.linking?.status === "running")
+    out.push(p.linking.stage === "checking" ? `Linking known names · ${p.linking.done ?? 0} of ${plural(p.linking.total ?? 0, "technology", "technologies")}`
+      : "Linking known names");
   if (p.classify?.status === "running")
     out.push(`Classifying · ${p.classify.done ?? 0} of ${plural(p.classify.total ?? 0, "technology", "technologies")}`);
   if (isLive(assess.status))
@@ -61,9 +64,10 @@ export default function StatusPill() {
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
         className="flex min-w-0 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[12.5px] text-white hover:bg-white/15">
         <span className={jobs.length ? LIVE_DOT : `h-1.5 w-1.5 shrink-0 rounded-full ${failed ? "bg-failed-dot" : "bg-white/50"}`} />
-        <span role="status" className="max-w-[10.5rem] truncate xl:max-w-none">
-          {text}
-          {p.problems > 0 && ` · ${plural(p.problems, "problem")}`}
+        <span role="status" className="flex min-w-0 items-center xl:max-w-none">
+          {/* on a narrow screen the problems count is kept and the rest gives way */}
+          <span className={`truncate ${p.problems > 0 ? "hidden max-w-[10.5rem] sm:inline xl:max-w-none" : "max-w-[10.5rem] xl:max-w-none"}`}>{text}</span>
+          {p.problems > 0 && <span className="whitespace-nowrap"><span className="hidden sm:inline"> · </span>{plural(p.problems, "problem")}</span>}
         </span>
       </button>
       {open && (
@@ -89,6 +93,9 @@ export default function StatusPill() {
               <Link href="/admin/operations#problems" className={link}>
                 {plural(p.problems, "problem")} → Operations
               </Link>
+            )}
+            {p.collect.run_id && (
+              <Link href={`/admin/runs/${p.collect.run_id}`} className={link}>The latest collection, step by step →</Link>
             )}
             <Link href="/admin/operations" className={link}>Operations →</Link>
           </div>

@@ -8,14 +8,17 @@ import BackendError from "@/components/BackendError";
 import BackLink from "@/components/BackLink";
 import ConfirmAction from "@/components/ConfirmAction";
 import DecisionNote from "@/components/DecisionNote";
-import AddLink from "@/components/AddLink";
+import AddEvidence from "@/components/AddEvidence";
 import FabricAssessment from "@/components/FabricAssessment";
 import FindEvidence from "@/components/FindEvidence";
 import TechAnswers from "@/components/TechAnswers";
 import TechHistory from "@/components/TechHistory";
 import WaitingOnYou from "@/components/WaitingOnYou";
 import FabricLabel from "@/components/FabricLabel";
+import LookFor from "@/components/LookFor";
+import { editionName } from "@/components/PublishEdition";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { calls, resumeAssessment, startAssessment, startClassify } from "@/lib/actions";
@@ -24,6 +27,7 @@ import { formatAt, formatDay, formatTime, orList, plural } from "@/lib/format";
 import type { FabricOpen } from "@/lib/open";
 import { useHere, withFrom } from "@/lib/here";
 import { useHood } from "@/lib/hood";
+import { PAGE_SIZE, useStoredStart } from "@/lib/paging";
 import { blockedReason, isLive, refreshPipeline, usePipeline } from "@/lib/pipeline";
 import { type Axis, HORIZON_TERM, type Placement } from "@/lib/scoring";
 import type { FoundHit } from "@/lib/signals";
@@ -45,10 +49,11 @@ type Fabric = {
 };
 
 type Summary = {
-  frontier: { edition: string; placed: boolean } | null; // the latest published edition, and whether it's in it
+  frontier: { edition: string; name: string | null; published_at: string; tz: string | null; placed: boolean } | null; // the latest published edition, and whether it's in it
   technology: { id: string; name: string; aliases: string[]; enabled: boolean; page_count: number; source_count: number;
     switched_off_at?: string | null; switched_off_tz?: string | null; pages_since_off?: number; wake?: boolean;
-    imported?: { file: string; at: string; tz: string | null; description: string | null } | null; catalog: Catalog };
+    imported?: { file: string; at: string; tz: string | null; description: string | null } | null; catalog: Catalog;
+    look_for: string[]; look_for_by: string | null; not_a_technology: string | null; mentions: number };
   state: TechState;
   assessment: { scoring_run_id: string; run_status: string; assessed_at: string; pages_read: number;
     evidence_runs: string[] | null; measures: Scored; fabrics: Fabric[]; not_assessed_in?: string[] } | null;
@@ -86,14 +91,15 @@ const secondary = "rounded-full border border-line bg-white px-3.5 py-1.5 text-s
 
 const FINDINGS = 5; // the top findings, in the Briefing's order; "View all" for the rest
 
-const TABS = [["overview", "Overview"], ["fabrics", "Fabrics"], ["evidence", "Evidence"], ["history", "History"]] as const;
+// the assessment, fabric by fabric, is the second tab (its address keeps ?tab=fabrics)
+const TABS = [["overview", "Overview"], ["fabrics", "Assessment"], ["evidence", "Evidence"], ["history", "History"]] as const;
 type Tab = (typeof TABS)[number][0];
 
 /** Everything about one technology: its journey and next step above every
  *  tab; then Overview (the verdict, the priorities, what waits on you, what
- *  the radar judged), Fabrics (the assessment, fabric by fabric), Evidence
+ *  the radar judged), Assessment (fabric by fabric), Evidence
  *  (findings and pages) and History (where its results came from, and what
- *  people decided). A link with ?fabric= opens on Fabrics. */
+ *  people decided). A link with ?fabric= opens on Assessment. */
 function TechnologyHub() {
   const { id } = useParams<{ id: string }>();
   const here = useHere();
@@ -133,19 +139,24 @@ function TechnologyHub() {
       })
       .then((d) => { setHits(d.hits); setHitTotal(d.total); })
       .catch(setError);
-    fetchJson<{ documents: Doc[]; total: number }>(`/api/technologies/${id}/documents`)
-      .then((d) => { setDocs(d.documents); setTotal(d.total); })
-      .catch(setError);
   }, [id]);
+  // its pages, 50 at a time, kept at the same rows when you come back
+  const [docStart, setDocStart] = useStoredStart(`tech-pages:${id}`);
 
   // reload when an assessment run, a classification run or Points of View move on
   const progress = p ? `${p.assess.status}:${p.assess.techs_done}:${p.pov.composed}:${p.classify?.status}:${p.classify?.finished_at}` : "";
   useEffect(() => { load(); }, [load, progress]);
-
-  const loadMore = () =>
-    fetchJson<{ documents: Doc[]; total: number }>(`/api/technologies/${id}/documents?skip=${docs?.length ?? 0}`)
-      .then((d) => { setDocs((prev) => [...(prev ?? []), ...d.documents]); setTotal(d.total); })
-      .catch(setError);
+  useEffect(() => {
+    const ask = new AbortController();
+    fetchJson<{ documents: Doc[]; total: number }>(`/api/technologies/${id}/documents?skip=${docStart}&limit=${PAGE_SIZE}`,
+      { signal: ask.signal })
+      .then((d) => {
+        if (d.total > 0 && docStart >= d.total) { setDocStart(Math.floor((d.total - 1) / PAGE_SIZE) * PAGE_SIZE); return; }
+        setDocs(d.documents); setTotal(d.total);
+      })
+      .catch((e) => { if (!ask.signal.aborted) setError(e); });
+    return () => ask.abort();
+  }, [id, docStart, setDocStart, progress]);
 
   async function act(fn: () => Promise<unknown>, done: string) {
     setNotice(null);
@@ -195,7 +206,6 @@ function TechnologyHub() {
   const lookForMore = (
     <>
       <FindEvidence gap={{ kind: "technology", tech_id: id }} only="button" onDone={load} />
-      <AddLink gap={{ tech_id: id }} onDone={load} />
     </>
   );
   let next: React.ReactNode;
@@ -223,7 +233,7 @@ function TechnologyHub() {
         onConfirm={() => resumeAssessment(s.unfinished!.scoring_run_id)} />
     );
   } else if (!a && t.page_count === 0) {
-    next = "No pages about it yet, so there's nothing to classify or assess. Find evidence searches the web for pages about it; Add a link reads a page you know.";
+    next = "No pages about it yet, so there's nothing to classify or assess. Find evidence searches the web for pages about it; Add evidence reads links or files you have and can take it on to its Point of View.";
     main = lookForMore;
   } else if (!a && !classified) {
     next = "Classify it: one model call reads its pages and judges how solid its evidence is, its commercial availability, TRL and domain.";
@@ -235,7 +245,7 @@ function TechnologyHub() {
       {assess("Assess anyway", true)}
     </>;
   } else if (!a && status === "thin") {
-    next = `${(s.status?.reason ?? "Its evidence was judged thin").replace(/\.$/, "")}. So it waits before scoring: Find evidence looks for more on the web, or add a page you know. It can still be assessed as it is.`;
+    next = `${(s.status?.reason ?? "Its evidence was judged thin").replace(/\.$/, "")}. So it waits before it can be assessed: Find evidence looks for more on the web, or Add evidence reads links or files you have. It can still be assessed as it is.`;
     main = <>{lookForMore}{assess("Assess anyway", true)}</>;
   } else if (!a) {
     next = "Ready to assess: it's scored in each fabric it touches, then its Point of View can be written.";
@@ -252,7 +262,7 @@ function TechnologyHub() {
     );
   } else {
     next = status === "placed" && s.frontier?.placed
-      ? `In the leaders' view, in the ${s.frontier.edition} edition: ${s.status?.reason}. Anything a person can still settle is under Waiting on you.`
+      ? `In the leaders' view, in ${editionName(s.frontier)}: ${s.status?.reason}. Anything a person can still settle is under Waiting on you.`
       : status === "placed"
       ? `Placed: ${s.status?.reason}. Leaders see it in the leaders' view once the next edition is published (Briefing › To do › Publish to leaders).`
       : `Held beside the grid: ${s.status?.reason ?? "no fabric could be placed"}. To place it, score a missing measure by hand or find evidence for it in a fabric's tab below, or override its priority.`;
@@ -300,7 +310,7 @@ function TechnologyHub() {
           <li>Overview also says whether it&apos;s in the catalog, Tata&apos;s own list of emerging technologies (Add to or
             Take out of the catalog, with Undo), and shows what the radar judged: commercial availability, readiness,
             domain and evidence, each with where it came from, Why? (the reason and its pages) and Change.</li>
-          <li>Fabrics: one tab per fabric it was assessed in, Tata Communications&apos; business areas; a tab&apos;s number
+          <li>Assessment: one tab per fabric it was assessed in, Tata Communications&apos; business areas; a tab&apos;s number
             counts what needs a person there before publishing. Each leads with the priority, why (how soon it arrives
             and how big the prize is) and the three scores the Point of View explains. Override priority sets it by hand,
             with a reason; the computed priority stays beside it.</li>
@@ -330,6 +340,9 @@ function TechnologyHub() {
           <p className="min-w-0 flex-1 basis-72"><b className="font-semibold">Next step:</b> {next}</p>
           {main && <div className="flex flex-wrap items-center gap-3">{main}</div>}
         </div>
+        {s.state !== "off" && ( // kept while it's assessed: an Add evidence job may be what's assessing it
+          <div className="mt-3"><AddEvidence techId={id} name={name} assessCalls={s.estimate.assess_calls} hasPov={!!s.pov} onDone={load} /></div>
+        )}
         <FindEvidence gap={{ kind: "technology", tech_id: id }} only="past" />
       </PageHeader>
 
@@ -395,7 +408,9 @@ function TechnologyHub() {
       </nav>
 
       {tab === "overview" && (
-        <div>
+        // at 1280 px and wider, two columns: the verdict and what waits on the left, the facts on the right
+        <div className="min-[1280px]:grid min-[1280px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] min-[1280px]:items-start min-[1280px]:gap-6">
+          <div className="min-w-0">
           <section className="mt-4 rounded-card border border-line bg-white px-5 py-4">
             <h2 className="font-semibold">Point of View</h2>
             <div className="mt-2">{povBlock}</div>
@@ -418,7 +433,10 @@ function TechnologyHub() {
             )}
             {a && a.measures.of > 0 && (
               <p className={`mt-2 text-sm ${thin || unplaced.length > 0 ? "text-amber-800" : "text-muted"}`}>
-                {a.measures.scored} of {a.measures.of} measures had enough evidence to score
+                {a.measures.scored} of {a.measures.of} measures scored
+                {(a.measures.waiting ?? 0) > 0 && `; ${a.measures.waiting} wait for your figures (Disruption threat, Serviceable capture)`}
+                {a.measures.of - a.measures.scored - (a.measures.waiting ?? 0) > 0
+                  && `; ${a.measures.of - a.measures.scored - (a.measures.waiting ?? 0)} had too little evidence`}
                 {unplaced.length > 0 && (unplaced.length === a.fabrics.length
                   ? `, so it has no priority yet in ${orList(unplaced)}`
                   : `; no priority yet in ${orList(unplaced)}`)}.
@@ -428,8 +446,12 @@ function TechnologyHub() {
           </section>
 
           {a && s.open.length > 0 && <WaitingOnYou open={s.open} href={(f, anchor) => tabHref("fabrics", f, anchor)} />}
+          </div>
 
-          <div className="mt-6 max-w-4xl text-sm text-neutral-700">
+          <aside className="min-w-0 min-[1280px]:mt-4" aria-label="What it is">
+          {s.classification && <TechAnswers techId={id} c={s.classification} cited={s.cited_pages ?? {}} status={status}
+            onChanged={load} narrow />}
+          <div className="mt-6 max-w-4xl text-sm text-neutral-700 min-[1280px]:mt-4">
             <p className="flex flex-wrap items-baseline gap-x-2 text-muted">
               <span>{t.catalog.in ? "In the catalog" : "Not in the catalog"}
                 {t.catalog.decision_id ? "." : t.catalog.in ? (imported ? `, from ${imported.file}.` : ".") : ": found by the radar only."}</span>
@@ -446,7 +468,7 @@ function TechnologyHub() {
           </div>
           {imported?.description && (
             <div className="mt-1 max-w-4xl text-sm text-neutral-700">
-              <p className={fullDescription ? "" : "line-clamp-2"}>
+              <p className={fullDescription ? "" : "line-clamp-3"}>
                 <span className="text-muted">Tata&apos;s description: </span>{imported.description}
               </p>
               {(imported.description?.length ?? 0) > 200 && (
@@ -456,8 +478,9 @@ function TechnologyHub() {
             </div>
           )}
 
-          {s.classification && <TechAnswers techId={id} c={s.classification} cited={s.cited_pages ?? {}} status={status}
-            onChanged={load} />}
+          <LookFor techId={id} names={t.look_for} by={t.look_for_by} mentions={t.mentions}
+            notATechnology={t.catalog.in ? t.not_a_technology : null} onSaved={load} />
+          </aside>
         </div>
       )}
 
@@ -513,6 +536,7 @@ function TechnologyHub() {
             </div>
           ) : (
             <div role="tabpanel">
+              {docs && <Pager className="mt-3" start={docStart} total={total} go={setDocStart} what="pages" />}
               {docs && (
                 <div className="mt-3 divide-y divide-neutral-100 rounded-card border border-line bg-white">
                   {docs.map((d) => (
@@ -520,7 +544,7 @@ function TechnologyHub() {
                       <div className="flex items-baseline gap-3">
                         <span className="min-w-0 flex-1 truncate font-medium">{d.title || d.end_url.replace(/^https?:\/\//, "")}</span>
                         {d.new && <span className="shrink-0 rounded-full bg-azure/10 px-2 py-0.5 text-[11px] text-ink">new</span>}
-                        <span className="shrink-0 bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] uppercase text-neutral-600">{d.kind ?? "article"}</span>
+                        <span className="shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] text-neutral-600">{({ article: "Article", pdf: "PDF", document: "Document" } as Record<string, string>)[d.kind ?? "article"] ?? d.kind}</span>
                       </div>
                       <a href={d.end_url} target="_blank" rel="noreferrer" className="mt-0.5 block truncate font-mono text-xs text-link hover:underline">
                         {d.end_url}
@@ -530,7 +554,7 @@ function TechnologyHub() {
                         {hood && <span>{d.source_id}</span>}
                         <span>collected {formatTime(d.scraped_at)}{(d.copies ?? 1) > 1 && ` (${d.copies} times in all)`}</span>
                         {d.found_by && <span className="text-navy">found by Find evidence on {formatAt(d.found_by.at, d.found_by.tz)}</span>}
-                        {d.published_date && <span>published {d.published_date}</span>}
+                        {d.published_date && <span>published {formatDay(d.published_date)}</span>}
                         {d.run_id && <Link href={`/admin/runs/${d.run_id}`} className="hover:underline">
                           {hood ? `collection ${d.run_id}` : "its collection →"}</Link>}
                       </div>
@@ -539,9 +563,7 @@ function TechnologyHub() {
                   {docs.length === 0 && <p className="px-5 py-6 text-sm text-neutral-500">No pages linked to this technology.</p>}
                 </div>
               )}
-              {docs && docs.length < total && (
-                <button onClick={loadMore} className={`mt-3 ${secondary}`}>Load more ({docs.length} of {total})</button>
-              )}
+              {docs && <Pager className="mt-3" start={docStart} total={total} go={setDocStart} what="pages" />}
             </div>
           )}
         </section>
@@ -560,10 +582,11 @@ function TechnologyHub() {
 /** Where a technology is on the radar's journey, one dot per step: filled when done. */
 function JourneyLine({ steps }: { steps: { label: string; done: boolean }[] }) {
   return (
-    <ol aria-label="Where it is on the radar" className="mt-3 flex flex-wrap items-center gap-y-1.5 text-[13px]">
+    <ol aria-label="Where it is on the radar" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] sm:gap-x-0">
+      {/* on a phone the steps wrap, so no connecting line: one would start the second line */}
       {steps.map((step, i) => (
         <li key={step.label} className="flex items-center">
-          {i > 0 && <span aria-hidden className={`mx-2 h-px w-5 sm:w-8 ${step.done ? "bg-navy" : "bg-line"}`} />}
+          {i > 0 && <span aria-hidden className={`mx-2 hidden h-px w-8 sm:block ${step.done ? "bg-navy" : "bg-line"}`} />}
           <span aria-hidden className={`mr-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10px] ${
             step.done ? "bg-navy text-white" : "border-2 border-line bg-white"}`}>{step.done ? "✓" : ""}</span>
           <span className={step.done ? "text-ink" : "text-muted"}>{step.label}</span>

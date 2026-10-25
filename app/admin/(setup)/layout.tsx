@@ -9,15 +9,17 @@ import { FINANCE_SHOWN } from "@/lib/value";
 // group, so every address stays as it was.
 const under = (prefix: string) => (path: string) => path === prefix || path.startsWith(prefix + "/");
 
-// Four groups: what the radar reads, how it judges, Tata's own frame, and the system.
+// Four groups, in the order the radar works: what it reads (and its limits), how it judges
+// (Classify before assessing), Tata's own frame, and the system.
 const GROUPS: { title: string; items: { href: string; label: string; active: (p: string) => boolean }[] }[] = [
   { title: "What the radar reads", items: [
   { href: "/admin/sources", label: "Sources",
     active: (p: string) => under("/admin/sources")(p) && !under("/admin/sources/settings")(p) },
-  { href: "/admin/signals/list", label: "Signal list", active: under("/admin/signals/list") }] },
+  { href: "/admin/signals/list", label: "Signal list", active: under("/admin/signals/list") },
+  { href: "/admin/sources/settings", label: "Settings", active: under("/admin/sources/settings") }] },
   { title: "How it judges", items: [
-  { href: "/admin/scoring", label: "Scoring method", active: under("/admin/scoring") },
   { href: "/admin/classification", label: "Classification", active: under("/admin/classification") },
+  { href: "/admin/scoring", label: "Scoring method", active: under("/admin/scoring") },
   { href: "/admin/prompts", label: "Skills", active: under("/admin/prompts") }] },
   { title: "Tata's frame", items: [
   { href: "/admin/path", label: "Path to scale", active: under("/admin/path") },
@@ -25,7 +27,6 @@ const GROUPS: { title: string; items: { href: string; label: string; active: (p:
   { href: "/admin/assumptions", label: "Assumptions", active: under("/admin/assumptions") },
   ...(FINANCE_SHOWN ? [{ href: "/admin/finance", label: "Finance", active: under("/admin/finance") }] : [])] }, // set aside for now
   { title: "System", items: [
-  { href: "/admin/sources/settings", label: "Settings", active: under("/admin/sources/settings") },
   { href: "/admin/changes", label: "Changes", active: under("/admin/changes") }] },
 ];
 
@@ -39,8 +40,9 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
           Setup
         </div>
         {GROUPS.map((g) => (
-          <div key={g.title} className="contents lg:mb-3 lg:block">
-            <div className="mb-1 hidden pl-3 text-[11px] text-neutral-500 lg:block">{g.title}</div>
+          // on a phone, one line per group with its name; on a wide screen, a column
+          <div key={g.title} className="flex w-full flex-wrap items-center gap-1 lg:mb-3 lg:block">
+            <div className="mr-1 text-[11px] text-neutral-500 lg:mb-1 lg:pl-3">{g.title}</div>
             {g.items.map((item) => {
               const active = item.active(pathname);
               return (
@@ -49,10 +51,10 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
                     active ? "bg-white font-medium text-ink lg:border-azure lg:bg-transparent"
                       : "text-muted hover:text-ink lg:border-transparent"}`}>
                   <span className="flex-1">{item.label}</span>
-                  {item.label === "Changes" && changes > 0 && (
+                  {item.label === "Changes" && changes.count > 0 && (
                     <span title="Setup edits not yet kept as the defaults"
-                      className="rounded-full bg-azure px-1.5 font-mono text-[10px] text-ink">
-                      {changes}
+                      className="rounded-full bg-azure px-1.5 text-[11px] text-ink">
+                      {changes.count.toLocaleString()} unsaved
                     </span>
                   )}
                 </Link>

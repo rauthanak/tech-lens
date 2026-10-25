@@ -1,5 +1,6 @@
 import type { Pov, PovFabric } from "@/components/PovText";
 import { ApiError, fetchJson } from "@/lib/api";
+import type { Verdict } from "@/lib/classification";
 import { formatDate } from "@/lib/format";
 import { withFrom } from "@/lib/here";
 import { PRIORITY } from "@/lib/theme";
@@ -32,7 +33,8 @@ export const LEADER_STATES: { id: LeaderState; name: string; means: string; chip
 ];
 
 /** A placement whose priority moved since the edition before: from what, and why. */
-export type Move = { from: string | null; reason: string; by_person: boolean };
+export type Move = { from: string | null; reason: string; by_person: boolean;
+  why?: string | null }; // the score that moved: "how big 5 → 7 after 40 new pages"
 
 /** One technology in one fabric, as an edition holds it (GET /api/frontier). */
 export type Item = {
@@ -56,6 +58,8 @@ export type Item = {
   threat_missing: string | null; // why there's none
   leader: Leader;
   moved?: Move;
+  evidence?: Verdict | null; // how solid its evidence is (editions from 24 Oct on)
+  pages?: number | null;     // the pages its assessment read
 };
 
 export type Held = Item & { reason: string };
@@ -117,17 +121,26 @@ export function frontierOf(items: Item[], lens: Lens, band: number): { on: Set<I
 export const moveText = (item: Item, since: string | undefined) =>
   item.moved ? `${item.moved.from ?? "no priority"} → ${item.priority}${since ? ` since ${since}` : ""}` : "";
 
-/** Why it moved, in words: the person's reason, or what changed. `short` where the
+/** Why it moved, in words: the person's reason, or the score that moved ("new
+ *  scores" when neither score changed: the edges did). `short` where the
  *  override's reason is already beside it. */
 export const moveReason = (m: Move, short = false) =>
-  (m.by_person ? (short ? "set by a person, as above" : `set by a person: ${m.reason}`) : m.reason);
+  (m.by_person ? (short ? "set by a person, as above" : `set by a person: ${m.reason}`) : m.why ?? m.reason);
 
-/** What a leader recorded, in a line: "A. Nimbhorkar owns it; next, Pilot with a bank by Nov 15, 2026". */
+const rank = (p: string | null) => (p ? Number(p.slice(1)) : 7);
+/** The moves that matter most first: into P1 or P2, then the biggest jumps. */
+export const biggestMoves = (items: Item[]) => [...items].sort((a, b) =>
+  Number(rank(b.priority) <= 2) - Number(rank(a.priority) <= 2)
+  || Math.abs(rank(b.moved?.from ?? null) - rank(b.priority)) - Math.abs(rank(a.moved?.from ?? null) - rank(a.priority))
+  || a.name.localeCompare(b.name));
+
+/** What a leader recorded, in a line: "A. Nimbhorkar owns it; next: Pilot with a bank, by Nov 15, 2026". */
 export function leaderText(l: Leader): string {
   if (!l.owner) return "No owner yet";
   const resources = ([["people", l.people], ["budget", l.budget], ["proof of concept", l.poc]] as const)
     .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`);
-  return `${l.owner} owns it; next, ${l.next_action}${l.due ? ` by ${formatDate(l.due, true)}` : ""}${resources.length ? `. Committed: ${resources.join("; ")}` : ""}`;
+  const next = (l.next_action ?? "").trim().replace(/\.$/, "");
+  return `${l.owner} owns it${next ? `; next: ${next}` : ""}${l.due ? `, by ${formatDate(l.due, true)}` : ""}${resources.length ? `. Committed: ${resources.join("; ")}` : ""}`;
 }
 
 export const leaderName = (l: Leader) => LEADER_STATES.find((s) => s.id === l.state) ?? LEADER_STATES[0];

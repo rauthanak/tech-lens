@@ -144,7 +144,9 @@ with sync_playwright() as p:
                                        "In catalog, thin evidence", "Switched off")), "List: the groups, in the deck's words")
         check(pg.locator("thead th", has_text="Status").count() == 1, "List: where each one is, with its reason")
         main = pg.inner_text("main")
-        check(bool(re.search(r"Research\s*[\d,]+.*Pilot\s*[\d,]+.*Early commercial\s*[\d,]+.*Mature\s*[\d,]+", main, re.S)),
+        # plan 10 phase 3: the buckets are the Commercial availability dropdown, each with its count
+        buckets = " ".join(pg.get_by_label("Commercial availability").evaluate("s => [...s.options].map(o => o.text)"))
+        check(bool(re.search(r"Research · [\d,]+.*Pilot · [\d,]+.*Early commercial · [\d,]+.*Mature · [\d,]+", buckets)),
               "List: Tata's buckets in order, with counts")
         check(pg.locator("tbody tr").first.locator("select").count() == 0, "List: rows have no menus; ticked rows move together")
         pg.get_by_role("button", name=re.compile("^Possibly nascent")).click()
@@ -168,6 +170,9 @@ with sync_playwright() as p:
         pg.goto(f"{BASE}/admin/technologies")
         settle(pg, 2500)
         note = pg.locator("details", has=pg.locator("summary", has_text=re.compile("^How the groups work$")))
+        if note.count() == 1:
+            note.locator("summary").click()  # closed by default since plan 10 phase 3
+            pg.wait_for_timeout(300)
         words = note.inner_text() if note.count() == 1 else ""
         check(all(w in words for w in ("Emerging-technologies", "New to Tata", "Blind spots", "Move to")),
               "List: how the groups work, naming the catalog's file and how to move")
@@ -185,25 +190,14 @@ with sync_playwright() as p:
             check(all(o in opts for o in ("Mature", "Add to the catalog", "Take out of the catalog", "Yes, nascent", "No, not nascent")),
                   "List: Move to… offers availability, the catalog and nascent")
             pg.screenshot(path=f"{OUT}/item-15-bar.png")
-            menu.select_option("catalog:no")
-            settle(pg)
-            check("taken out of the catalog" in pg.inner_text("body"), "List: Move to… says what it did")
-            check(not api(f"/technologies/{tech}/summary")["technology"]["catalog"]["in"], "Catalog: taken out by a person")
-            pg.goto(f"{BASE}/admin/technologies/{tech}")
-            settle(pg)
-            taken = pg.locator("p", has_text="Taken out of the catalog by a person")
-            check(taken.count() == 1, "Technology page: who took it out, and when")
-            pg.locator("div.max-w-4xl", has=taken).first.screenshot(path=f"{OUT}/item-15-technology.png")
-            taken.get_by_role("button", name="Undo").click()
-            settle(pg)
-            check(api(f"/technologies/{tech}/summary")["technology"]["catalog"]["in"], "Catalog: Undo puts it back")
-            check(pg.get_by_role("button", name="Take out of the catalog").count() == 1, "Technology page: Take out of the catalog")
+            # plan 10: read-only from here: Move to… applies at once, so the walk no longer moves a live technology
+            # (the move and its Undo are covered by the API tests)
 
         # item 9 + 10: a thin technology offers Find evidence
         pg.goto(f"{BASE}/admin/technologies/{thin}")
         settle(pg)
         body = pg.inner_text("body")
-        check("Find evidence" in body and "Add a link" in body, "Thin technology: Find evidence and Add a link")
+        check("Find evidence" in body and "Add evidence" in body, "Thin technology: Find evidence and Add evidence")  # renamed in change 39
         if shot:
             pg.screenshot(path=f"{OUT}/item-10-find-evidence.png")
         if nascent:
@@ -272,19 +266,20 @@ with sync_playwright() as p:
         pg.goto(f"{BASE}/admin")
         settle(pg, 2500)
         todo = pg.get_by_role("region", name="To do")
-        titles = todo.locator("h3 button:first-child").all_inner_texts()
-        check(titles == ["Before scoring", "Before publishing", "Publish to leaders"],
+        titles = [re.sub(r"\s*·.*$", "", t) for t in todo.locator("h3 button:first-child").all_inner_texts()]  # a phone adds "· 3"
+        check(titles == ["Before assessing", "Before publishing", "Publish to leaders"],  # "assessing" since plan 10 phase 5
               f"Briefing: the To do strip's three columns ({titles})")
         first_col = todo.locator("div.px-5").first.inner_text()
-        check(bool(re.search(r"\d[\d,]* (technolog|possibly|proposed|older)", first_col)) or "Nothing waits" in first_col,
-              "Briefing: each column lists what waits first (change 23)")
+        if width != 400:  # on a phone each column folds to its title and count (plan 10 phase 4)
+            check(bool(re.search(r"\d[\d,]* (technolog|possibly|proposed|older)", first_col)) or "Nothing waits" in first_col,
+                  "Briefing: each column lists what waits first (change 23)")
         opened_before = pg.evaluate("localStorage.getItem('tech-lens:briefing-todo')")
-        todo.get_by_role("button", name="Before scoring").click()
+        todo.get_by_role("button", name="Before assessing").click()
         pg.wait_for_timeout(500)
         check(todo.locator("#todo-before-scoring").count() == 1 or opened_before == "before-scoring",
               "Briefing: a column's title opens its full list below the strip")
         if todo.locator("#todo-before-scoring").count() == 1:
-            todo.get_by_role("button", name="Before scoring").click()  # as it was
+            todo.get_by_role("button", name="Before assessing").click()  # as it was
         no_sideways(pg, "Briefing")
         if shot:
             pg.screenshot(path=f"{OUT}/item-6-briefing.png")
@@ -354,7 +349,8 @@ with sync_playwright() as p:
             pg.goto(f"{BASE}/admin/operations")
             settle(pg, 2500)
             body = pg.inner_text("main")
-            check("Last organized" in body and "Classified" in body and "had nothing new" in body,
+            # worded per step since change 37 and plan 10 phase 1: "Merged … names", "… technologies with new pages judged"
+            check("Merged" in body and "judged" in body and "Collect: read pages" in body,
                   "Operations: each step says when it last ran and what it did")
             pg.locator("ol").first.screenshot(path=f"{OUT}/item-14-operations.png")
             pg.goto(f"{BASE}/admin")
@@ -436,9 +432,11 @@ with sync_playwright() as p:
         main = pg.inner_text("main")
         headline = (summary["pov"] or {}).get("headline") or ""
         tabs = [re.sub(r"[\d,\s]+$", "", t) for t in pg.locator("nav[aria-label='Parts of this page'] a").all_inner_texts()]
-        check(tabs == ["Overview", "Fabrics", "Evidence", "History"], f"Technology: four tabs, Overview first {tabs}")
-        check(bool(headline) and main.index(headline[:40]) < main.index("Waiting on you") < main.index("Commercial availability".upper())
-              if "Waiting on you" in main and headline else False, "Overview: the verdict, then Waiting on you, then what the radar judged")
+        check(tabs == ["Overview", "Assessment", "Evidence", "History"], f"Technology: four tabs, Overview first {tabs}")  # renamed in plan 10 phase 5
+        # plan 10 phase 4: what the radar judged sits in its own column beside them on a wide screen
+        # the Next step box above may name "Waiting on you" too: the section is the one after the verdict
+        check(bool(headline) and headline[:40] in main and "Waiting on you" in main[main.index(headline[:40]):]
+              and "COMMERCIAL AVAILABILITY" in main.upper(), "Overview: the verdict, then Waiting on you, and what the radar judged")
         if width == 1440:
             check(pg.evaluate("document.documentElement.scrollHeight") < 2000, "Overview: fits in under 2,000 px at 1440")
         check("Tata's figure" not in main and "Undefined" not in main and not re.search(r"\b1 pages\b", main),
@@ -562,8 +560,9 @@ with sync_playwright() as p:
         strip = pg.get_by_role("region", name="To do").inner_text()
         check(" items" not in strip, "Briefing: no summed 'items' count")
         pub = pg.get_by_role("region", name="To do").locator("div.px-5").nth(2).inner_text()
-        check("Since then:" in pub or "Nothing has changed since" in pub or "Nothing published yet" in pub,
-              "Briefing: the publish card says what changed since the edition")
+        if width != 400:  # folded to its title on a phone (plan 10 phase 4)
+            check("Since then:" in pub or "Nothing has changed since" in pub or "Nothing published yet" in pub,
+                  "Briefing: the publish card says what changed since the edition")
         window = pg.locator("main select").first.bounding_box()
         count = pg.get_by_text(re.compile(r"findings from")).first.bounding_box()
         check(window is not None and count is not None and abs(window["y"] - count["y"]) < 30,

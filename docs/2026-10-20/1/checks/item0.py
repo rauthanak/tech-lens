@@ -39,7 +39,7 @@ def active_menu(pg) -> str:
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for width in (1440, 1920, 400):
-        ctx = browser.new_context(viewport={"width": width, "height": 1000})
+        ctx = browser.new_context(viewport={"width": width, "height": 1000}, timezone_id="America/Chicago")  # a reader on Central time
         pg = ctx.new_page()
         errors: list[str] = []
         pg.on("pageerror", lambda e: errors.append(str(e)))

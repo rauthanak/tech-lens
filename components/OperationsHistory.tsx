@@ -18,11 +18,13 @@ const short = (s: string, n = 90) => (s.length > n ? `${s.slice(0, n)}…` : s);
 type HistoryRow = { key: string; at: string; tz?: string | null; kind: string; facts: string[]; tokens?: string[]; status: string | null;
   href: string | null; id: string; ids: string[]; usageKind?: string; used: boolean;
   count?: number; until?: string }; // a group of single Points of View: how many, and when the last was written
-type RunRow = { id: string; status: string; run_start_date_time: string; incomplete?: number; resolve_id?: string;
+type By = { by?: { name: string } | null }; // who started it (none: before sign-in, or the radar's own work)
+const byWhom = (r: By) => (r.by ? [`started by ${r.by.name}`] : []);
+type RunRow = By & { id: string; status: string; run_start_date_time: string; incomplete?: number; resolve_id?: string;
   totals?: { new_documents?: number; signals?: number; other_signals?: number } };
-type ScoringRow = { _id: string; status: string; started_at: string;
+type ScoringRow = By & { _id: string; status: string; started_at: string;
   progress?: { techs_total?: number; llm_calls?: number } };
-type About = { status?: string; tz?: string; total?: number; trigger?: string; file?: string; summary?: string;
+type About = By & { status?: string; tz?: string; total?: number; trigger?: string; file?: string; summary?: string;
   stopped_reason?: string | null; error?: string | null;
   technology?: string | null; gap?: { tech_id?: string }; assessment?: { id: string; started_at: string } };
 
@@ -116,7 +118,7 @@ export default function OperationsHistory() {
               facts: [plural(r.totals?.new_documents ?? 0, "new page"),
                 plural((r.totals?.signals ?? 0) + (r.totals?.other_signals ?? 0), "finding"),
                 ...(r.incomplete ? [`${plural(r.incomplete, "website")} not read to the end`] : []),
-                ...callsOf([own.get(`${r.id}:collection`), ...parts])],
+                ...callsOf([own.get(`${r.id}:collection`), ...parts]), ...byWhom(r)],
               tokens: tokens([own.get(`${r.id}:collection`), ...parts], r.run_start_date_time),
             };
           }),
@@ -125,7 +127,7 @@ export default function OperationsHistory() {
             href: `/admin/scoring/assessments/${r._id}`, ids: [r._id], usageKind: "scoring",
             used: own.has(`${r._id}:scoring`),
             facts: [plural(r.progress?.techs_total ?? 0, "technology", "technologies"),
-              plural(r.progress?.llm_calls ?? 0, "model call")],
+              plural(r.progress?.llm_calls ?? 0, "model call"), ...byWhom(r)],
             tokens: tokens([own.get(`${r._id}:scoring`)], r.started_at),
           })),
           ...others.map((u) => {
@@ -137,7 +139,8 @@ export default function OperationsHistory() {
               status: a.status ?? null, href: aboutHref(kind, u.run_id, a),
               // only an assessment run's id also carries another kind (Points of View once written under it)
               ids: [u.run_id, ...parts.map((x) => x.run_id)], usageKind: kind === "pov" ? kind : undefined, used: true,
-              facts: [...aboutFacts(kind, a), plural(u.calls + parts.reduce((n, x) => n + x.calls, 0), "model call")],
+              facts: [...aboutFacts(kind, a), plural(u.calls + parts.reduce((n, x) => n + x.calls, 0), "model call"),
+                ...byWhom(a)],
               tokens: tokens([u, ...parts], u.first_at),
             };
           }),

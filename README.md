@@ -51,8 +51,9 @@ with one command using Docker — **follow the step-by-step guide in the
 [Tech Atlas README](https://github.com/rauthanak/tech-atlas#readme)**. It is
 written for people who have never coded: you download both projects side by
 side, install Docker Desktop, and run `docker compose up` from the
-`tech-atlas` folder. The portal then runs at <http://localhost:3100>, and
-Frontier at <http://localhost:3200>.
+`tech-atlas` folder. The portal then runs at <http://localhost:3100>. Everyone
+signs in there: admins land on the portal, leaders on the leaders' view
+(Frontier, `/frontier`).
 
 ## For developers (run without Docker)
 
@@ -67,5 +68,6 @@ start the dev server on <http://localhost:3100>. `start-prod.sh` does the same,
 then builds and serves. The brand font (Montserrat) is in `app/fonts/`, so a
 build needs only the npm registry.
 Requests to `/api/*` are proxied to the API (`TECH_ATLAS_API_URL`, default
-`http://127.0.0.1:8100` — see `next.config.ts`). The same app serves Frontier
-when started with `APP_SIDE=frontier` (see `proxy.ts`).
+`http://127.0.0.1:8100` — see `next.config.ts`). The same address serves the
+portal and Frontier; `proxy.ts` sends each person to sign in, then to their side
+by role, and the API checks every call itself.

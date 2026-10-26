@@ -9,6 +9,7 @@ import { type EditionPov, fetchEditionPov } from "@/components/frontier/items";
 import PovLeader from "@/components/frontier/PovLeader";
 import { type Pov, PovBody, PovHelp } from "@/components/PovText";
 import { formatAt } from "@/lib/format";
+import { useMe } from "@/lib/me";
 import { useTechLabel } from "@/lib/tech-labels";
 
 /** Only the executive view's own addresses are followed back. */
@@ -20,11 +21,12 @@ function PointOfView() {
   const { tech } = useParams<{ id: string; tech: string }>();
   const back = backTo(useSearchParams().get("from"));
   const label = useTechLabel();
+  const me = useMe();
   const [pov, setPov] = useState<EditionPov | null>(null);
   const [missing, setMissing] = useState<string | null>(null); // why the edition has none
   const [error, setError] = useState<unknown>(null);
 
-  // how often leaders open and print it (counted here, on the leaders' address, only)
+  // how often leaders open and print it (the API counts leaders only: an admin's visit isn't counted)
   useEffect(() => {
     const seen = (kind: "opened" | "printed") =>
       fetch(`/api/frontier/pov/${encodeURIComponent(tech)}/seen`, {
@@ -63,6 +65,11 @@ function PointOfView() {
         )}
       </PageHeader>
 
+      {me?.role === "admin" && (
+        <p className="mt-3 rounded bg-azure/10 px-3 py-1.5 text-[13px] text-navy print:hidden">
+          You&apos;re viewing as an admin: this visit isn&apos;t counted.
+        </p>
+      )}
       {error != null && <BackendError error={error} />}
       {missing && (
         <p className="mt-6 rounded-card border border-line bg-white px-5 py-6 text-sm text-neutral-600">

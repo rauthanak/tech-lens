@@ -15,6 +15,7 @@ type Change = {
   label: string;
   kind: "added" | "edited" | "deleted";
   updated_at: string | null;
+  updated_by?: { name: string } | null; // who edited it last (none before sign-in)
   fields: FieldDiff[];
 };
 type ChangesResponse = { count: number; loaded_at: string | null; items: Change[]; awaiting_review: Record<string, number> };
@@ -227,7 +228,9 @@ export default function ChangesPage() {
                         {({ added: "Added", edited: "Edited", deleted: "Deleted" } as Record<string, string>)[c.kind] ?? c.kind}
                       </span>
                       {c.updated_at && (
-                        <span className="font-mono text-[11px] text-neutral-500">edited {formatAt(c.updated_at)}</span>
+                        <span className="font-mono text-[11px] text-neutral-500">
+                          edited {formatAt(c.updated_at)}{c.updated_by ? ` by ${c.updated_by.name}` : ""}
+                        </span>
                       )}
                     </label>
                     <div className="mt-3 space-y-2.5">

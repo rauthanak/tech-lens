@@ -71,6 +71,7 @@ export type Edition = {
   label: string; // its name, else the day it was published
   published_at: string;
   tz: string | null;
+  by?: { name: string } | null; // who published it (none before sign-in)
   previous: { _id: string; name: string | null; label: string; published_at: string; tz: string | null } | null;
   counts: { placements: number; held: number; povs: number; moved: number; technologies: number };
 };

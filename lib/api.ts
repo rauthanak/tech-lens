@@ -26,7 +26,20 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, `HTTP ${response.status}`, detail);
 }
 
-/** One call to the API: a network failure or an error status throws an ApiError. */
+/** The API's reason when a password must be changed before anything else (tech-atlas services/auth). */
+export const CHANGE_FIRST = "Choose a new password first.";
+
+let leaving = false; // several calls failing together send the browser away once
+function leave(to: string) {
+  if (leaving) return;
+  leaving = true;
+  window.location.assign(to);
+}
+const here = () => encodeURIComponent(window.location.pathname + window.location.search);
+
+/** One call to the API: a network failure or an error status throws an ApiError.
+ *  Not signed in (401) sends the browser to sign in, and a password to change
+ *  first to that page; the call still fails, so a save never looks done. */
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -34,7 +47,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new ApiError(null, "network");
   }
-  if (!response.ok) throw await toApiError(response);
+  if (!response.ok) {
+    const error = await toApiError(response);
+    const path = typeof window === "undefined" ? null : window.location.pathname;
+    if (path && error.status === 401 && path !== "/sign-in") leave(`/sign-in?next=${here()}`);
+    if (path && error.status === 403 && error.detail === CHANGE_FIRST && path !== "/account/password")
+      leave(`/account/password?next=${here()}`);
+    throw error;
+  }
   return response.json();
 }
 

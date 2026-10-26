@@ -9,7 +9,8 @@ import { undo } from "@/lib/decisions";
 import { formatAt, formatDay, plural } from "@/lib/format";
 
 type Choice = { _id: string; what: string; from_file: string | null; reason: string | null; at: string; tz: string | null;
-  active: boolean; undone_at?: string; undone_tz?: string | null };
+  active: boolean; undone_at?: string; undone_tz?: string | null;
+  by?: { name: string } | null; undone_by?: { name: string } | null }; // who (none before sign-in)
 
 /** A technology's History tab: where its results came from (its latest
  *  assessment, the pages and collections it read, its Point of View), then
@@ -80,9 +81,10 @@ export default function TechHistory({ techId, assessment, pages, newPages, pov, 
                   {c.active && <ActButton label="Undo" run={() => undo(c._id)} onDone={changed} />}
                 </div>
                 <p className="text-[12.5px] text-muted">
-                  {c.from_file ? `From the catalog file ${c.from_file}, ` : "By a person, "}{formatAt(c.at, c.tz)}
+                  {c.from_file ? `From the catalog file ${c.from_file}, ` : `By ${c.by?.name ?? "a person"}, `}{formatAt(c.at, c.tz)}
                   {c.reason && !c.from_file && <>: <span className="text-ink">{c.reason}</span></>}
-                  {!c.active && (c.undone_at ? ` · undone ${formatAt(c.undone_at, c.undone_tz)}` : " · replaced by a later choice")}
+                  {!c.active && (c.undone_at ? ` · undone ${formatAt(c.undone_at, c.undone_tz)}${c.undone_by ? ` by ${c.undone_by.name}` : ""}`
+                    : " · replaced by a later choice")}
                 </p>
               </li>
             ))}

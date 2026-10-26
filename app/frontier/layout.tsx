@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import PersonMenu from "@/components/PersonMenu";
 
 export const metadata: Metadata = {
   title: "Leaders' view · Tata Communications",
   description: "Emerging technologies by how soon they arrive and how big the prize is, for Tata Communications' leaders",
 };
 
-/** The executive view: the brand header with its name only (no menu, no
- *  status), above every Frontier page. */
+/** The executive view: the brand header with its name and the signed-in
+ *  person (no menu, no status), above every Frontier page. */
 export default function FrontierLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
@@ -18,6 +19,7 @@ export default function FrontierLayout({ children }: { children: React.ReactNode
             <span aria-hidden className="hidden h-5 w-px bg-white/25 sm:block" />
             <span className="text-xs text-white/70 sm:text-sm">Tata Communications · Emerging technology radar</span>
           </Link>
+          <div className="ml-auto"><PersonMenu /></div>
         </div>
       </header>
       <main className="mx-auto max-w-[1760px] px-4 py-8 sm:px-6 lg:px-10">{children}</main>

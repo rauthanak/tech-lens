@@ -32,7 +32,7 @@ type PovRow = {
   assessed_at: string | null; // the assessment it was written from
   sections?: { headline?: string };
   new_since_written: number | null;
-  views?: { opened: number; printed: number; last_opened: string | null } | null; // on the leaders' address
+  views?: { opened: number; printed: number; last_opened: string | null; leaders: { name: string }[] } | null; // leaders only
   placements: { fabric_id: string; fabric: string; priority: string | null; horizon: string | null;
     computed_priority?: string | null; override?: { priority: string; reason: string | null } | null }[];
 };
@@ -239,7 +239,7 @@ function PovLibrary() {
                   <span className="text-xs text-neutral-500">
                     Written {formatDay(pv.composed_at)}
                     {pv.assessed_at && ` · from the ${formatDay(pv.assessed_at)} assessment`}
-                    {pv.views?.opened ? ` · leaders opened it ${plural(pv.views.opened, "time")}` : ""}
+                    {pv.views?.opened ? ` · opened ${plural(pv.views.opened, "time")} by ${plural(pv.views.leaders.length, "leader")}` : ""}
                   </span>
                   {edition && pv.composed_at > edition.published_at && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900"

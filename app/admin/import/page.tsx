@@ -116,7 +116,7 @@ function CheckCard({ imp, onAnother }: { imp: Import; onAnother: () => void }) {
         <button type="button" onClick={onAnother} className={SECONDARY}>Upload another file</button>
       </div>
       <p className="mt-1.5 text-xs text-muted">
-        Uploaded {formatAt(imp.at, imp.tz)}
+        Uploaded {formatAt(imp.at, imp.tz)}{imp.by ? ` by ${imp.by.name}` : ""}
         {missing.length > 0 && <> · Not in the file: {missing.join(", ")} (left unset)</>}
         {" · "}
         {repeated.length

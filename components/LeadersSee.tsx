@@ -14,7 +14,8 @@ export function PublishLink({ children }: { children: React.ReactNode }) {
 }
 
 type Seen = { edition: Edition | null; composed_at: string | null; composed_tz: string | null;
-  views?: { opened: number; printed: number; last_opened: string | null } | null };
+  views?: { opened: number; printed: number; last_opened: string | null;
+    leaders: { name: string; opened: number; printed: number; last_opened: string | null }[] } | null };
 
 /** On a Point of View's page: which version leaders see, the one on screen or
  *  an earlier one in the latest edition, and where to publish this one. */
@@ -39,10 +40,11 @@ export default function LeadersSee({ tech, composedAt }: { tech: string; compose
       {e && (
         <span className="block text-neutral-600">
           {seen.views?.opened
-            ? `Leaders opened it ${plural(seen.views.opened, "time")}, last ${formatAt(seen.views.last_opened!, null)}`
+            ? `Opened ${plural(seen.views.opened, "time")} by ${plural(seen.views.leaders.length, "leader")}`
+              + ` (${seen.views.leaders.map((l) => l.name).join(", ")}), last ${formatAt(seen.views.last_opened!, null)}`
               + (seen.views.printed ? `; printed or saved as PDF ${plural(seen.views.printed, "time")}` : "") + "."
             : "Leaders haven't opened it yet."}{" "}
-          Counted on the leaders&apos; address; who isn&apos;t known until there&apos;s sign-in.
+          Admins&apos; visits aren&apos;t counted.
         </span>
       )}
     </p>

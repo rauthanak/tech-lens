@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import PersonMenu from "@/components/PersonMenu";
 import StatusPill from "@/components/StatusPill";
 import { useChangesCount } from "@/lib/changes";
 
@@ -69,9 +70,10 @@ export default function TopBar() {
           {menu(WORK)}
         </nav>
         <div className="ml-auto flex items-center gap-4">
-          <a href={process.env.NEXT_PUBLIC_FRONTIER_URL ?? "http://localhost:3200"} target="_blank" rel="noreferrer"
+          <a href="/frontier" target="_blank" rel="noreferrer"
             className="hidden whitespace-nowrap text-sm text-white/70 hover:text-white sm:inline">Leaders&apos; view ↗</a>
           <StatusPill />
+          <PersonMenu />
           <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu"
             className="text-lg text-white/80 hover:text-white lg:hidden">
             {open ? "✕" : "☰"}
@@ -84,7 +86,7 @@ export default function TopBar() {
           <span aria-hidden className="my-1 h-px w-full bg-white/15" />
           {menu(WORK)}
           <span aria-hidden className="my-1 h-px w-full bg-white/15" />
-          <a href={process.env.NEXT_PUBLIC_FRONTIER_URL ?? "http://localhost:3200"} target="_blank" rel="noreferrer"
+          <a href="/frontier" target="_blank" rel="noreferrer"
             className="px-3 py-2 text-sm text-white/70 hover:text-white">Leaders&apos; view ↗</a>
         </nav>
       )}

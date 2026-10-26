@@ -27,7 +27,8 @@ const GROUPS: { title: string; items: { href: string; label: string; active: (p:
   { href: "/admin/assumptions", label: "Assumptions", active: under("/admin/assumptions") },
   ...(FINANCE_SHOWN ? [{ href: "/admin/finance", label: "Finance", active: under("/admin/finance") }] : [])] }, // set aside for now
   { title: "System", items: [
-  { href: "/admin/changes", label: "Changes", active: under("/admin/changes") }] },
+  { href: "/admin/changes", label: "Changes", active: under("/admin/changes") },
+  { href: "/admin/people", label: "People", active: under("/admin/people") }] },
 ];
 
 export default function SetupLayout({ children }: { children: React.ReactNode }) {

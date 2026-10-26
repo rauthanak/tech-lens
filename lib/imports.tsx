@@ -27,7 +27,8 @@ export type Result = { joined: number; added: number; shared?: number };
 export type Reopened = { at: string; tz: string; rows: number[]; withdrawn: number };
 export type Summary = { _id: string; file: string; sheet: string; at: string; tz: string | null; status: Status; rows: number;
   counts: Counts; result?: Result;
-  confirmed_at?: string | null; reopened?: Reopened[]; // a confirmed import whose matches came back for review
+  confirmed_at?: string | null; reopened?: Reopened[];
+  by?: { name: string } | null; confirmed_by?: { name: string } | null; // who (none before sign-in) // a confirmed import whose matches came back for review
   waiting?: number; // proposed matches waiting for a decision (the list's own count)
   // a newer import of the same file, confirmed after this one: it settled this one's rows
   replaced_by?: { id: string; at: string; tz: string | null; confirmed_at: string | null; confirmed_tz: string | null } | null };
@@ -52,7 +53,8 @@ export const reopenedOf = (s: Summary) =>
   editableStatus(s.status) && s.confirmed_at && s.result && s.reopened?.length ? s.reopened[s.reopened.length - 1] : null;
 /** "Confirmed Oct 20 · 115 joined, 885 added". */
 export const confirmedWords = (s: Summary) => s.result
-  ? `Confirmed ${formatDay(s.confirmed_at)} · ${s.result.joined.toLocaleString()} joined, ${s.result.added.toLocaleString()} added`
+  ? `Confirmed ${formatDay(s.confirmed_at)}${s.confirmed_by ? ` by ${s.confirmed_by.name}` : ""} · `
+    + `${s.result.joined.toLocaleString()} joined, ${s.result.added.toLocaleString()} added`
   : "Confirmed";
 export const waitingOf = (c: Counts) => Math.max(0, c.proposed - c.accepted - c.rejected);
 export const isOrAre = (n: number) => (n === 1 ? "is" : "are");

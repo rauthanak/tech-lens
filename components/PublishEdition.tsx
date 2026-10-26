@@ -58,7 +58,7 @@ export function usePublish(): { lines: string[] | null; intro: React.ReactNode; 
         <p className="mt-2 text-sm">
           {last ? (
             <>Leaders see <b className="font-semibold">{editionName(last)}</b>, published{" "}
-              {formatAt(last.published_at, last.tz)}: {plural(last.counts.placements, "placement")},{" "}
+              {formatAt(last.published_at, last.tz)}{last.by ? ` by ${last.by.name}` : ""}: {plural(last.counts.placements, "placement")},{" "}
               {plural(last.counts.povs, "Point of View", "Points of View")}
               {last.previous ? `, ${plural(last.counts.moved, "priority", "priorities")} moved since ${last.previous.label}` : ""}.</>
           ) : "Nothing is published yet: the leaders' view stays empty until the first edition."}

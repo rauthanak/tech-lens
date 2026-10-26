@@ -72,7 +72,7 @@ export default function UseCases({ cases, suggested, none, failed, decisions, pa
       )}
       {cases.map((uc) => (
         <div key={uc.key}>
-          <div className="flex flex-wrap items-baseline gap-2">
+          <div className="flex break-after-avoid flex-wrap items-baseline gap-2">
             <span className="font-semibold">{uc.rank}. {uc.title}</span>
             {compact ? <FoldedRefs ids={uc.pages} pages={pages} /> : <PageRefs ids={uc.pages} pages={pages} />}
           </div>

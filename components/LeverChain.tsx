@@ -40,7 +40,7 @@ export default function LeverChain({ lever, name, order, mechanism, pages, compa
     </div>
   );
   return (
-    <div className="rounded-lg border border-line bg-ground/40 px-3 py-2 text-[13px]">
+    <div className="break-inside-avoid rounded-lg border border-line bg-ground/40 px-3 py-2 text-[13px]">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="font-semibold">{n ? `Lever ${n} · ` : ""}{name ?? lever.lever_id}</span>
         <span className="rounded bg-navy/[0.07] px-1.5 text-[11.5px] text-navy" title="How it creates value: Setup › Mechanisms">

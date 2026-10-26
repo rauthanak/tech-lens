@@ -46,7 +46,7 @@ function nowAndSource(m: WatchMetric): { text: string; source?: string } {
 
 function Line({ name, children }: { name: string; children: React.ReactNode }) {
   return (
-    <div className="flex gap-3">
+    <div className="flex break-inside-avoid gap-3">
       <dt className={label}>{name}</dt>
       <dd className="min-w-0 flex-1 text-neutral-700">{children}</dd>
     </div>
@@ -69,8 +69,8 @@ export function Sign({ m, owned }: { m: WatchMetric; owned?: { techId: string; o
     } catch (e) { setError(errorText(e)); }
   };
   return (
-    <div className="break-inside-avoid px-5 py-4 text-sm print:px-0">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+    <div className="px-5 py-4 text-sm print:px-0">
+      <div className="flex break-after-avoid flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="min-w-0 font-medium leading-snug">
           {m.metric}
           {m.crossed && <span className="ml-2 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Crossed its threshold</span>}

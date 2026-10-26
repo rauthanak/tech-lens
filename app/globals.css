@@ -88,9 +88,11 @@
 }
 
 /* PoV print/PDF: white paper, score-chip colours kept. Text flows across
-   pages (at least 3 lines either side of a break) and headings stay with it;
-   small blocks (a card, a metric, a table row) carry break-inside-avoid in
-   the page itself, so no page is left half empty. */
+   pages (at least 3 lines either side of a break) and headings stay with it.
+   Only small blocks (a summary card, a lever, a score row, a table row) carry
+   break-inside-avoid; big ones (the scores, a fabric's use cases) flow across
+   pages, since a block taller than the room left would leave half a page empty
+   or a near-empty page behind it. */
 /* a page that prints on one landscape sheet (Where each skill is used) */
 @page landscape-sheet {
   size: A4 landscape;

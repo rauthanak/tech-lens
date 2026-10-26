@@ -60,7 +60,9 @@ export function usePublish(): { lines: string[] | null; intro: React.ReactNode; 
             <>Leaders see <b className="font-semibold">{editionName(last)}</b>, published{" "}
               {formatAt(last.published_at, last.tz)}{last.by ? ` by ${last.by.name}` : ""}: {plural(last.counts.placements, "placement")},{" "}
               {plural(last.counts.povs, "Point of View", "Points of View")}
-              {last.previous ? `, ${plural(last.counts.moved, "priority", "priorities")} moved since ${last.previous.label}` : ""}.</>
+              {last.previous ? `, ${plural(last.counts.moved, "priority", "priorities")} moved since ${last.previous.label}` : ""}.{" "}
+              <a href="/frontier/pack" target="_blank" rel="noreferrer" className="text-link hover:underline">
+                Preview its edition pack ↗</a></>
           ) : "Nothing is published yet: the leaders' view stays empty until the first edition."}
         </p>
       )}

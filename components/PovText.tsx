@@ -151,11 +151,11 @@ export function EvidenceGaps({ gaps, sources = [], fabricIds = {} }: {
       <h2 className={heading}>Evidence gaps</h2>
       <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3 print:block print:space-y-3">
         {shown.map((g) => (
-          <div key={g.fabric} className="break-inside-avoid rounded-card border border-line bg-white px-4 py-3 print:rounded-none print:border-0 print:p-0">
-            <FabricLabel id={fabricIds[g.fabric]} name={g.fabric} />
+          <div key={g.fabric} className="rounded-card border border-line bg-white px-4 py-3 print:rounded-none print:border-0 print:p-0">
+            <div className="break-after-avoid"><FabricLabel id={fabricIds[g.fabric]} name={g.fabric} /></div>
             <ul className="mt-2 space-y-1.5">
               {g.missing.map((m, i) => (
-                <li key={i} className="flex gap-2 text-sm leading-relaxed text-neutral-700">
+                <li key={i} className="flex break-inside-avoid gap-2 text-sm leading-relaxed text-neutral-700">
                   <span className="text-navy">·</span>
                   <span>{renderCitations(m, sources)}</span>
                 </li>
@@ -174,7 +174,7 @@ export function SourceList({ sources = [] }: { sources?: Source[] }) {
   return (
     <ol className="space-y-1.5 text-[13px] leading-snug">
       {sources.map((src) => (
-        <li key={src.n} id={`source-${src.n}`} className="flex gap-2">
+        <li key={src.n} id={`source-${src.n}`} className="flex break-inside-avoid gap-2">
           <span className="w-7 shrink-0 text-right text-muted">[{src.n}]</span>
           <span className="min-w-0 break-words">
             {src.url ? (
@@ -208,14 +208,14 @@ function Fold({ title, hint, className = "", children }: {
         </span>
         {hint && <span className="text-xs text-muted print:hidden">{hint}</span>}
       </summary>
-      <div className="space-y-6 border-t border-line px-4 py-4 print:border-0 print:px-0">{children}</div>
+      <div className="space-y-6 border-t border-line px-4 py-4 print:border-0 print:px-0 print:pb-0">{children}</div>
     </details>
   );
 }
 
 function Card({ title, value, children }: { title: string; value?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="rounded-card border border-line bg-white px-4 py-3">
+    <div className="break-inside-avoid rounded-card border border-line bg-white px-4 py-3">
       <div className={heading}>{title}</div>
       {value != null && <div className="mt-1 text-sm font-semibold">{value}</div>}
       <div className="mt-1 space-y-1 text-[12.5px] leading-snug text-neutral-600">{children}</div>
@@ -262,7 +262,7 @@ function Answers({ pov, admin }: { pov: Pov; admin: boolean }) {
     lines.set(key, [...(lines.get(key) ?? []), f]);
   }
   return (
-    <div className="mt-6 grid break-inside-avoid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+    <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 print:[&>*:last-child:nth-child(odd)]:col-span-2">
       <Card title="Priority">
         {lines.size === 0 && <p>Not set: the assessment it was written from is no longer stored.</p>}
         <ul className="space-y-1.5">
@@ -417,15 +417,16 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
       <p className="mt-1 text-[13px] text-neutral-600">
         Each use case is a way Tata could earn or save money with this technology in one of its business areas (fabrics).
       </p>
-      {/* phones: a card per fabric, each line labelled */}
-      <div className="mt-2 space-y-3 md:hidden print:hidden">
+      {/* phones and paper: a card per fabric, each line labelled (on paper a table's narrow columns make rows
+          too tall to break well) */}
+      <div className="mt-2 space-y-3 md:hidden print:block">
         {fabrics.map((f) => {
           const rows = rowsOf(f);
           return (
             <div key={f.fabric_id} className="rounded-card border border-line bg-white px-4 py-3 text-sm">
-              <FabricLabel id={f.fabric_id} name={f.fabric} />
+              <div className="break-after-avoid"><FabricLabel id={f.fabric_id} name={f.fabric} /></div>
               {rows.map((r, i) => (
-                <div key={i} className="mt-2 leading-snug">
+                <div key={i} className="mt-2 break-inside-avoid leading-snug">
                   {caseCell(r, i, rows.length)}
                   {r.capital && <div className="mt-1 text-[13px]"><span className="text-muted">Investment needed: </span>{investment(r)}</div>}
                 </div>
@@ -438,7 +439,7 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
           );
         })}
       </div>
-      <div className="mt-2 hidden overflow-x-auto rounded-card border border-line bg-white md:block print:block">
+      <div className="mt-2 hidden overflow-x-auto rounded-card border border-line bg-white md:block print:hidden">
         <table className="w-full min-w-[760px] table-fixed text-sm">
           {FINANCE_SHOWN
             ? <colgroup><col className="w-[13%]" /><col className="w-[33%]" /><col className="w-[22%]" /><col className="w-[16%]" /><col className="w-[16%]" /></colgroup>
@@ -455,7 +456,7 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
           {fabrics.map((f) => {
             const rows = rowsOf(f);
             return (
-              <tbody key={f.fabric_id} className="break-inside-avoid border-t border-neutral-100 first-of-type:border-t-0">
+              <tbody key={f.fabric_id} className="border-t border-neutral-100 first-of-type:border-t-0">
                 {rows.map((r, i) => (
                   <tr key={i} className={i > 0 ? "border-t border-neutral-50" : ""}>
                     {i === 0 && <td rowSpan={rows.length} className={cell}><FabricLabel id={f.fabric_id} name={f.fabric} /></td>}
@@ -627,7 +628,7 @@ export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?
               )}
             </Fold>
           )}
-          <Fold title="Score detail, in words: what each score rests on" className="score-detail print:break-before-page"
+          <Fold title="Score detail, in words: what each score rests on" className="score-detail"
             hint="the measures themselves open under Why in Scores">
             {Object.entries(AXIS_LABELS).map(([axis, name]) => {
               const covers = named((m) => m.axis === axis);

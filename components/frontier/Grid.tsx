@@ -338,7 +338,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 print:hidden">
           <span className="mr-1 hidden text-xs text-muted sm:inline">Scroll to zoom, drag to move</span>
           <button type="button" className={button} onClick={() => zoomBy(STEP)} disabled={view.k >= MAX_ZOOM}
             aria-label="Zoom in" title="Zoom in">+</button>
@@ -550,7 +550,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
       </div>
 
       {width > 0 && unnamed > 0 && (
-        <p className="mt-2 text-xs text-muted">
+        <p className="mt-2 text-xs text-muted print:hidden">
           {unnamed === 1 ? "1 name doesn't" : `${unnamed} names don't`} fit at this zoom: zoom in, or point at a dot
           to see what it is.
         </p>

@@ -44,7 +44,7 @@ export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
       {fabs.map((f) => {
         const fid = f.assessment.fabric_id;
         return (
-          <div key={fid} className="break-inside-avoid rounded-card border border-line bg-white px-4 py-3">
+          <div key={fid} className="rounded-card border border-line bg-white px-4 py-3">
             <FabricLabel id={fid} name={f.assessment.fabric} />
             <div className="mt-2">
               <UseCases readOnly cases={f.assessment.use_cases ?? []}

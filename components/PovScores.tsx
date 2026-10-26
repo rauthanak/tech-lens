@@ -94,7 +94,7 @@ export function Scores({ pov, changeHref }: { pov: Pov; changeHref?: (fabricId: 
   const grid = "grid grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))_minmax(0,1.1fr)_3.5rem] sm:items-start";
   const label = "block text-[11px] text-muted sm:hidden";
   return (
-    <section className="break-inside-avoid">
+    <section>
       <h2 className={heading}>Scores</h2>
       <div className="mt-2 rounded-card border border-line bg-white text-sm">
         <div className={`${grid} hidden border-b border-neutral-200 px-3 py-2 font-mono text-[10.5px] uppercase tracking-wider text-neutral-500 sm:grid`}>
@@ -104,7 +104,7 @@ export function Scores({ pov, changeHref }: { pov: Pov; changeHref?: (fabricId: 
           <span />
         </div>
         {(pov.fabrics ?? []).map((f) => (
-          <div key={f.fabric_id} className="score-row border-b border-neutral-100 last:border-b-0">
+          <div key={f.fabric_id} className="score-row break-inside-avoid border-b border-neutral-100 last:border-b-0">
             <button type="button" data-why={f.fabric_id} onClick={() => (why === f.fabric_id ? close() : open(f.fabric_id))}
               aria-pressed={why === f.fabric_id}
               className={`${grid} w-full px-3 py-2.5 text-left hover:bg-ground/60 ${why === f.fabric_id ? "bg-azure/10" : ""}`}

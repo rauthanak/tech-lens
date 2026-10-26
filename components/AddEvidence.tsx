@@ -9,6 +9,9 @@ import { refreshPipeline } from "@/lib/pipeline";
 import { LIVE_DOT } from "@/lib/theme";
 
 const ACCEPT = ".pdf,.txt,.md,.html,.htm";
+// the upload limits, the same as tech-atlas/src/app/api/find_evidence.py's (checked here before sending)
+const MAX_FILES = 10, MAX_FILE_MB = 8, MAX_TOTAL_MB = 16;
+const MB = 1024 * 1024;
 // the steps a job goes through, by its stage; the last two only when it goes on to the Point of View
 const STEPS = ["Read the pages", "Judge its evidence", "Assess it", "Write its Point of View"];
 const pickFiles = "inline-block cursor-pointer rounded-full border border-line bg-white px-3.5 py-1 text-[13px] hover:bg-ground focus-within:ring-2 focus-within:ring-azure";
@@ -76,9 +79,20 @@ export default function AddEvidence({ techId, name, assessCalls, hasPov, onDone 
       </button>
     );
 
+  /** Why these files can't be sent as they are, or null. */
+  const tooBig = () => {
+    if (files.length > MAX_FILES) return `At most ${MAX_FILES} files at a time.`;
+    const big = files.find((f) => f.size > MAX_FILE_MB * MB);
+    if (big) return `${big.name} is larger than ${MAX_FILE_MB} MB: split it, or save only the pages you need as a PDF.`;
+    if (files.reduce((n, f) => n + f.size, 0) > MAX_TOTAL_MB * MB) return `Together the files are over ${MAX_TOTAL_MB} MB: add them in two goes.`;
+    return null;
+  };
+
   const start = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    const refused = tooBig();
+    setError(refused);
+    if (refused) return;
     setStarting(true);
     const form = new FormData();
     form.append("tech_id", techId);
@@ -108,7 +122,8 @@ export default function AddEvidence({ techId, name, assessCalls, hasPov, onDone 
           className="mt-1 block w-full rounded border border-neutral-300 px-2 py-1.5 font-mono text-[12.5px]" />
       </label>
       <div>
-        <span className="font-medium">Files</span> <span className="text-muted">PDF, text, Markdown or HTML, up to 25 MB each.
+        <span className="font-medium">Files</span> <span className="text-muted">PDF, text, Markdown or HTML, up to {MAX_FILE_MB} MB each
+          and {MAX_TOTAL_MB} MB together (at most {MAX_FILES} files).
           For a page behind a login, save it as a PDF and add it here; never put a password in a link.</span>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <label className={pickFiles}>

@@ -9,6 +9,10 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-npm install
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# the locked versions, installed only when package-lock.json changed since the last install
+$installed = "node_modules/.package-lock.json"
+if (-not (Test-Path $installed) -or (Get-Item package-lock.json).LastWriteTime -gt (Get-Item $installed).LastWriteTime) {
+  npm ci
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 npm run dev

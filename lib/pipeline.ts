@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { fetchJson } from "@/lib/api";
+import { errorText, fetchJson } from "@/lib/api";
 import { hidden } from "@/lib/visible";
 
 // GET /api/pipeline, polled once for every reader: every 5 s while anything
@@ -91,7 +91,7 @@ export const isLive = (status?: string | null) => status === "running" || status
 /** Anything running right now, in any step. */
 export const anyLive = (p: Pipeline | null) =>
   !!p && (isLive(p.collect.status) || p.signals.recheck?.status === "running" ||
-    isLive(p.assess.status) || p.pov.job?.status === "running" ||
+    isLive(p.assess.status) || isLive(p.classify?.status) || p.pov.job?.status === "running" ||
     p.technologies.resolve_status === "running" || p.linking?.status === "running");
 
 let current: Pipeline | null = null;
@@ -99,17 +99,30 @@ const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let last = 0;                  // when it was last asked
 let inFlight: Promise<void> | null = null;
+let queued: Promise<void> | null = null; // the one more ask an action wants after the one in flight
+let lastGood = 0;              // when the last answer came
+let failure: PipelineFailure | null = null;
 const SOON_MS = 5000;          // a focus or a return to the tab within this of the last ask doesn't ask again
 
+/** The last check that failed (cleared by the next answer): when (`at`), when
+ *  the status shown was last answered (`since`; null: never), and why. */
+export type PipelineFailure = { at: number; since: number | null; why: string };
+
 /** Fetch now, tell every reader, and schedule the next poll. A tab in the
- *  background schedules nothing; it asks again when it's shown. */
+ *  background schedules nothing; it asks again when it's shown. One request
+ *  at a time: a call while one is in flight (an action's refresh) gets one
+ *  more ask after it, shared by every such caller, so its answer comes from
+ *  after the action. */
 export function refreshPipeline(): Promise<void> {
+  if (inFlight) {
+    queued ??= inFlight.then(() => { queued = null; return refreshPipeline(); });
+    return queued;
+  }
   clearTimeout(timer);
-  if (inFlight) return inFlight; // one request at a time, shared by every caller
   last = Date.now();
   inFlight = fetchJson<Pipeline>("/api/pipeline")
-    .then((p) => { current = p; })
-    .catch(() => {}) // keep the last good state; the next poll retries
+    .then((p) => { current = p; lastGood = Date.now(); failure = null; })
+    .catch((e) => { failure = { at: Date.now(), since: lastGood || null, why: errorText(e).replace(/\.\s*$/, "") }; }) // the last good state stays; the next poll retries
     .finally(() => {
       inFlight = null;
       listeners.forEach((listener) => listener());
@@ -126,6 +139,7 @@ function poll() {
 
 /** Back on the page (focus, or the tab shown again): ask, unless it just did. */
 function back() {
+  if (inFlight) return; // its answer is on the way
   if (!hidden() && Date.now() - last > SOON_MS) refreshPipeline();
   else if (!hidden() && !timer) refreshPipeline();
 }
@@ -151,6 +165,11 @@ function subscribe(onChange: () => void): () => void {
 /** The pipeline, shared by every reader on the page; null until it loads. */
 export function usePipeline(): Pipeline | null {
   return useSyncExternalStore(subscribe, () => current, () => null);
+}
+
+/** The last failed check, or null while the status is up to date. */
+export function usePipelineFailure(): PipelineFailure | null {
+  return useSyncExternalStore(subscribe, () => failure, () => null);
 }
 
 /** Why a job can't start now, mirroring the backend's 409 rules, or null. */

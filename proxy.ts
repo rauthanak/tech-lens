@@ -10,13 +10,11 @@ import { NextResponse, type NextRequest } from "next/server";
 // not in next.config, so each address opens on its own side in one step.
 
 /** The only API calls the executive address passes on, all GET: the grid,
- *  a Point of View (with what it shows beside its text), and for its value
- *  levers in full each fabric's latest assessment and the levers' names. */
+ *  a Point of View as the published edition holds it (its value levers frozen
+ *  in it, so no live PoV or assessment), and the names it shows beside its text. */
 const FRONTIER_READS = [
   /^\/api\/frontier$/,
-  /^\/api\/frontier\/pov\/[\w.~-]+$/, // a Point of View as the published edition holds it
-  /^\/api\/scoring\/runs\/[\w.~-]+\/pov\/[\w.~-]+$/,
-  /^\/api\/technologies\/[\w.~-]+\/assessment$/,
+  /^\/api\/frontier\/pov\/[\w.~-]+$/,
   /^\/api\/scoring\/fabrics$/,
   /^\/api\/lists\/mechanisms$/,
   /^\/api\/technologies\/labels$/,
@@ -46,6 +44,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // everything but the build's static files, image optimisation and the icon
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)"],
+  // every /api path (even one ending in .png), then everything but the
+  // build's static files, image optimisation and the icon
+  matcher: ["/api/:path*", "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)"],
 };

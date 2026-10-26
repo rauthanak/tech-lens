@@ -301,9 +301,11 @@ function FrontierView() {
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
+    let live = true; // a late answer for a fabric no longer chosen is dropped
     fetchJson<Frontier>(`/api/frontier${fabric ? `?fabric=${encodeURIComponent(fabric)}` : ""}`)
-      .then((data) => { setLoaded({ fabric, data }); setError(null); })
-      .catch(setError);
+      .then((data) => { if (live) { setLoaded({ fabric, data }); setError(null); } })
+      .catch((e) => { if (live) setError(e); });
+    return () => { live = false; };
   }, [fabric]);
 
   // the address with one choice changed, the others kept

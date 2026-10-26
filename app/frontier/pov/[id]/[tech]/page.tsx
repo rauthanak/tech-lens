@@ -36,7 +36,11 @@ function PointOfView() {
   }, [tech]);
 
   useEffect(() => {
-    fetchEditionPov(tech).then((r) => { setPov(r.pov); setMissing(r.missing); setError(null); }).catch(setError);
+    let live = true; // a late answer for another technology is dropped
+    fetchEditionPov(tech)
+      .then((r) => { if (live) { setPov(r.pov); setMissing(r.missing); setError(null); } })
+      .catch((e) => { if (live) setError(e); });
+    return () => { live = false; };
   }, [tech]);
 
   const title = label(pov?.technology ?? tech.replace(/-/g, " "));

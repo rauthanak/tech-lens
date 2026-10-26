@@ -474,7 +474,7 @@ function TokenCeiling({ value, onSave }: { value: number; onSave: (v: number) =>
   // shown with thousands commas; the commas are dropped before saving
   const [v, setV] = useState(value.toLocaleString());
   const n = Number(v.replace(/[,\s]/g, ""));
-  const valid = Number.isFinite(n) && n > 0;
+  const valid = Number.isInteger(n) && n > 0;
   return (
     <div className="mt-3 flex flex-wrap items-end gap-4">
       <label className="text-sm">

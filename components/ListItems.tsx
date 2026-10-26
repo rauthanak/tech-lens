@@ -21,7 +21,8 @@ const CLASSIFY_NOTE = "A new name shows at once; a changed definition marks the 
  *  one at the bottom. A changed definition marks the technologies filed under
  *  the old wording, and offers to classify them again, with the cost first. */
 export default function ListItems({ list, noun, fields, canAdd = true, canRemove = true, technologies = true,
-  removeNote = "Technologies filed under it move to the catch-all, marked to be classified again.", note = CLASSIFY_NOTE }: {
+  removeNote = "Technologies filed under it move to the catch-all, or to what the radar judged from their pages, "
+    + "marked to be classified again. A choice a person or an import made for it is withdrawn; History keeps it.", note = CLASSIFY_NOTE }: {
   list: string;
   noun: string;
   fields: { key: keyof ListItem | "evidence_needed" | "decision"; label: string; kind?: "text" | "long" | "number" | "check" | "date"; note?: string }[];

@@ -33,10 +33,10 @@ export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
   const lists = useValueLists();
   const key = fabricIds.join(",");
   useEffect(() => {
-    if (!key || frozen) return;
+    if (!key || frozen || !admin) return; // the leaders' side shows only an edition's copy
     Promise.all(key.split(",").map((f) => fetchJson<Fab>(`/api/technologies/${techId}/assessment?fabric=${encodeURIComponent(f)}`)))
       .then(setFabs).catch((e) => setError(errorText(e)));
-  }, [techId, key, frozen]);
+  }, [techId, key, frozen, admin]);
   if (error) return <p className="text-[13px] text-failed">Couldn&apos;t load where the value lands: {error}</p>;
   if (fabs.length === 0) return null;
   return (

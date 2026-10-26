@@ -23,7 +23,7 @@ import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { calls, resumeAssessment, startAssessment, startClassify } from "@/lib/actions";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
-import { formatAt, formatDay, formatTime, orList, plural } from "@/lib/format";
+import { andList, formatAt, formatDay, formatTime, orList, plural } from "@/lib/format";
 import type { FabricOpen } from "@/lib/open";
 import { useHere, withFrom } from "@/lib/here";
 import { useHood } from "@/lib/hood";
@@ -88,6 +88,23 @@ type Doc = {
 
 const field = "mt-1 block w-56 rounded border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
 const secondary = "rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground disabled:opacity-50";
+
+/** What POST /technologies/{id}/merge says it carried over, beside the technology. */
+type Merged = { merge?: { absorbed: { id: string; name: string }[]; choices_moved: number; catalog_carried: boolean;
+  conflicts: { kept: string; dropped: string; from: string }[] } };
+
+/** The notice after a merge of `typed` into `into`, from what the merge carried over (parts with nothing left out). */
+function mergedNotice(r: Merged, into: string, typed: string): string {
+  const m = r.merge;
+  if (!m) return `Merged. ${into} keeps its name and now has the merged pages.`;
+  const x = m.absorbed.length ? andList(m.absorbed.map((a) => a.name)) : typed;
+  let text = `Merged. ${into} now has ${x}'s pages`;
+  text += m.choices_moved > 0 ? `; ${m.choices_moved} of ${x}'s choices moved to ${into}.` : ".";
+  if (m.conflicts.length)
+    text += ` ${into}'s own choice was kept for: ${m.conflicts.map((c) => `${c.kept} (${c.from} had: ${c.dropped})`).join("; ")}.`;
+  if (m.catalog_carried) text += ` ${x}'s catalog membership moved to ${into}.`;
+  return text;
+}
 
 const FINDINGS = 5; // the top findings, in the Briefing's order; "View all" for the rest
 
@@ -158,11 +175,11 @@ function TechnologyHub() {
     return () => ask.abort();
   }, [id, docStart, setDocStart, progress]);
 
-  async function act(fn: () => Promise<unknown>, done: string) {
+  async function act<T>(fn: () => Promise<T>, done: string | ((r: T) => string)) {
     setNotice(null);
     try {
-      await fn();
-      setNotice(done);
+      const r = await fn();
+      setNotice(typeof done === "function" ? done(r) : done);
       refreshTechLabels();
       load();
     } catch (e) {
@@ -388,9 +405,11 @@ function TechnologyHub() {
             </label>
             <ConfirmAction label={`Merge into ${name}`} secondary confirmLabel="Merge"
               disabled={mergeName.trim() ? null : "Type the name of the technology to merge."}
-              question={`Merge ${mergeName.trim()} into ${name}? ${mergeName.trim()}'s pages move to ${name}, and ${mergeName.trim()} is removed.`}
-              onConfirm={() => act(() => sendJson(`/api/technologies/${id}/merge`, "POST", { others: [mergeName.trim()] }),
-                `Merged. ${name} keeps its name and now has the merged pages.`)} />
+              question={`Merge ${mergeName.trim()} into ${name}? ${mergeName.trim()}'s pages, names and the choices people made on it `
+                + `(changes, priorities, scores, Tata's plan) move to ${name}, and ${mergeName.trim()} is removed. `
+                + `Where both have a choice on the same thing, ${name}'s is kept. This can't be undone.`}
+              onConfirm={() => act(() => sendJson<Merged>(`/api/technologies/${id}/merge`, "POST", { others: [mergeName.trim()] }),
+                (r) => mergedNotice(r, name, mergeName.trim()))} />
           </div>
         </div>
       )}

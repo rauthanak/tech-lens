@@ -61,7 +61,11 @@ Needs Node.js, plus the Tech Atlas API running on port 8100.
 - macOS/Linux: `./start.sh`
 - Windows: double-click `start.bat` (runs `start.ps1`)
 
-Both do `npm install` and start the dev server on <http://localhost:3100>.
+Both install the locked packages with `npm ci` (only when `package-lock.json`
+changed since the last install, so a restart never picks up new versions) and
+start the dev server on <http://localhost:3100>. `start-prod.sh` does the same,
+then builds and serves. The brand font (Montserrat) is in `app/fonts/`, so a
+build needs only the npm registry.
 Requests to `/api/*` are proxied to the API (`TECH_ATLAS_API_URL`, default
 `http://127.0.0.1:8100` — see `next.config.ts`). The same app serves Frontier
 when started with `APP_SIDE=frontier` (see `proxy.ts`).

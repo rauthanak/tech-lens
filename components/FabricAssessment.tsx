@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ActButton from "@/components/ActButton";
 import AddLink from "@/components/AddLink";
 import BackendError from "@/components/BackendError";
@@ -138,11 +138,16 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
   const [picking, setPicking] = useState(false); // the blockers' checklist, opened from "Pick blockers…"
   const lists = useValueLists();
 
-  const load = useCallback(() =>
-    fetchJson<Resp>(`/api/technologies/${techId}/assessment${fabric ? `?fabric=${encodeURIComponent(fabric)}` : ""}`)
-      .then((d) => { setData(d); setError(null); })
-      .catch(setError), [techId, fabric]);
-  useEffect(() => { load(); }, [load]);
+  // only the latest load's answer is applied, so a late one for another tab can't replace it
+  const asked = useRef(0);
+  const load = useCallback(() => {
+    const n = ++asked.current;
+    return fetchJson<Resp>(`/api/technologies/${techId}/assessment${fabric ? `?fabric=${encodeURIComponent(fabric)}` : ""}`)
+      .then((d) => { if (n === asked.current) { setData(d); setError(null); } })
+      .catch((e) => { if (n === asked.current) setError(e); });
+  }, [techId, fabric]);
+  const latest = useRef(load); // a save that ends after a tab change reloads the tab now chosen
+  useEffect(() => { latest.current = load; load(); }, [load]);
   // a link to a part ("#finance" from the Point of View, "#measures" from Waiting on you, "#finance" from the
   // path's next step) lands on it once it's drawn, opening it if it's folded
   const drawn = data?.assessment._id;
@@ -160,7 +165,7 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
   };
   const done = async () => {
     setForm(null);
-    await load();
+    await latest.current();
     onChanged?.();
   };
 

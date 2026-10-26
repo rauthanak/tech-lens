@@ -59,18 +59,30 @@ export const sendJson = <T>(url: string, method: "POST" | "PUT" | "DELETE", body
 export const sendForm = <T>(url: string, form: FormData) =>
   request<T>(url, { method: "POST", headers: { "X-Time-Zone": browserTz() }, body: form });
 
-/** A human explanation of what went wrong and what to do about it. */
+/** On a development build only: where the server is started from. */
+const LOCAL = process.env.NODE_ENV === "development" ? " Running locally? Start tech-atlas: cd tech-atlas && ./start.sh" : "";
+
+/** A human explanation of what went wrong and what to do about it: no
+ *  answer at all, the server failing, or the server refusing (with its reason). */
 export function explain(error: unknown): { title: string; hint: string } {
   const status = error instanceof ApiError ? error.status : null;
-  if (status === null || status >= 500) {
+  const detail = error instanceof ApiError ? error.detail : null;
+  if (status === null) {
     return {
-      title: "tech-atlas is not running",
-      hint: "Nothing answered on port 8100. Start it in another terminal: cd tech-atlas && ./start.sh",
+      title: "The portal can't be reached",
+      hint: "The browser got no answer. Check the network connection, then reload the page." + LOCAL,
+    };
+  }
+  if (status >= 500) {
+    return {
+      title: "The radar's server couldn't answer",
+      hint: (detail ?? `It may be restarting, or this request failed on it (HTTP ${status}). Try again in a minute; `
+        + "if it keeps happening, tell the team that runs the radar.") + LOCAL,
     };
   }
   return {
-    title: `The backend returned an error (HTTP ${status})`,
-    hint: "Check the tech-atlas terminal for the traceback.",
+    title: `The radar refused this request (HTTP ${status})`,
+    hint: detail ?? "No reason was given. Reload the page; if it keeps happening, tell the team that runs the radar.",
   };
 }
 

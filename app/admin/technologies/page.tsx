@@ -282,7 +282,7 @@ function Technologies() {
       onConfirm={() => assessSet("new_evidence")} />;
   if (state === "no_pov" && write)
     batch = <ConfirmAction label={`Write these ${write.count}`} cost={calls(write.calls)}
-      disabled={p?.pov.job?.status === "running" ? "Points of View are being written." : null}
+      disabled={blockedReason(p, "pov")}
       question={`Write ${plural(write.count, "Point of View", "Points of View")}? About ${plural(write.calls, "model call")}.`}
       onConfirm={() => writePovs(false)} />;
   if (state === "stopped_partway" && resume)
@@ -331,7 +331,7 @@ function Technologies() {
       <PageHeader title="Technologies"
         right={<div className="flex flex-col items-end gap-2"><TechnicalDetailsSwitch /><AddTechnology onAdded={reload} />
           <ImportLink /></div>}
-        intro="Every technology the radar found on collected pages, or that Tata imported, and where each one stands. Priority runs from P1 (act now) to P6 (just watch)."
+        intro="Every technology the radar found on collected pages, or that Tata imported, and where each one stands. Priority runs from P1 (act now) to P6 (no action yet)."
         help={<>
           <li>Each row says where it stands, in one status with its reason: Assessed (with its best priority, and the
             fabrics that have it), Assessed, no priority yet (how soon or how big couldn&apos;t be scored), Ready to assess,
@@ -352,6 +352,9 @@ function Technologies() {
           <li>Tick rows (or select all in the group) to switch them off or on, move them, or assess them (the cost
             shows before anything starts). Included, the last column, is the same switch for one row: switched off,
             a technology is left out of assessments, and its pages are still collected.</li>
+          <li>+ Add technology opens a box over the page: type its name and it is matched against the register first, the
+            way an imported row is; the cost shows before any model call. Find evidence on its page then looks for
+            pages about it.</li>
           <li>The Technical details switch adds page and source counts, and how many pages come from H1, H2 and H3
             sources (see Setup › Sources).</li>
         </>} />

@@ -16,7 +16,8 @@ export default function DomainsPage() {
   const [subs, setSubs] = useState<ListItem[]>([]);
   const [onlyNew, setOnlyNew] = useState(false);
   const [q, setQ] = useState("");
-  const [note, setNote] = useState<{ text: string; undo?: () => Promise<unknown> } | null>(null);
+  const [note, setNote] = useState<{ text: string; undo?: () => Promise<unknown>; failed?: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());   // proposed sub-domains ticked for Accept or Merge
   const [asking, setAsking] = useState<{ ids: string[]; into?: string } | null>(null); // waits for a yes: into = merge, else accept
   const load = () => Promise.all([fetchJson<{ items: ListItem[] }>("/api/lists/domains"), fetchJson<{ items: ListItem[] }>("/api/lists/subdomains")])
@@ -25,9 +26,12 @@ export default function DomainsPage() {
   const proposed = subs.filter((s) => s.status === "new");
   const shown = subs.filter((s) => (!onlyNew || s.status === "new") && (!q || s.name.toLowerCase().includes(q.toLowerCase())));
   const nameOf = (id: string) => subs.find((x) => x._id === id)?.name ?? id;
-  const act = (fn: () => Promise<unknown>, done: string, undo?: () => Promise<unknown>) =>
-    fn().then(() => { setNote({ text: done, undo }); configChanged(); load(); })
-      .catch((e) => setNote({ text: `Not done: ${errorText(e)}` }));
+  const act = (fn: () => Promise<unknown>, done: string, undo?: () => Promise<unknown>) => {
+    setBusy(true);
+    return fn().then(() => { setNote({ text: done, undo }); configChanged(); load(); })
+      .catch((e) => setNote({ text: `Not done: ${errorText(e)}`, failed: true }))
+      .finally(() => setBusy(false));
+  };
   const accept = (ids: string[]) => act(() => sendJson("/api/lists/subdomains/status", "POST", { ids, status: "seeded" }),
     ids.length === 1 ? `${nameOf(ids[0])} accepted.` : `${plural(ids.length, "sub-domain")} accepted.`,
     () => sendJson("/api/lists/subdomains/status", "POST", { ids, status: "new" }));
@@ -86,7 +90,7 @@ export default function DomainsPage() {
           className="ml-auto rounded-full border border-line bg-white px-3 py-1 text-sm" />
       </div>
       {note && (
-        <p role="status" className="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm text-muted">
+        <p role="status" className={`mt-2 flex flex-wrap items-baseline gap-x-3 text-sm ${note.failed ? "text-failed" : "text-muted"}`}>
           {note.text}
           {note.undo && (
             <button type="button" className="text-link hover:underline"
@@ -103,7 +107,7 @@ export default function DomainsPage() {
                   ? `Merge ${asking.ids.length === 1 ? nameOf(asking.ids[0]) : plural(asking.ids.length, "sub-domain")} into ${nameOf(asking.into)}? Their technologies move there, at no model cost; Undo puts them back.`
                   : `Accept ${plural(asking.ids.length, "proposed sub-domain")}? They join Tata's list; Undo marks them new again.`}
               </span>
-              <button type="button" onClick={yes} className="rounded-full bg-navy px-3 py-1 text-white">{asking.into ? "Merge" : "Accept"}</button>
+              <button type="button" onClick={yes} disabled={busy} className="rounded-full bg-navy px-3 py-1 text-white disabled:opacity-50">{busy ? "Working…" : asking.into ? "Merge" : "Accept"}</button>
               <button type="button" onClick={() => setAsking(null)} className="text-muted hover:text-ink">Cancel</button>
             </>
           ) : (

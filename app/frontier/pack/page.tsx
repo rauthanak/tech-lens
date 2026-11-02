@@ -86,13 +86,16 @@ export default function EditionPackPage() {
         </p>
       </header>
 
-      {/* the grid sizes itself to its box, so the box is an A4 page's printable width: it prints whole */}
-      <div className="mt-6 max-w-[672px] break-inside-avoid">
-        <Grid items={placed} cutpoints={data.cutpoints} withFabric from="/frontier" lens="growth"
-          frontier={{ ...frontier, band }} since={e.previous?.label} />
+      {/* on screen the grid takes the wide column with Act now beside it, what the grid asks for first; the grid
+          sizes itself to its box, so in print the box is an A4 page's printable width and it prints whole */}
+      <div className="mt-6 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] print:block">
+        <div className="break-inside-avoid print:max-w-[672px]">
+          <Grid items={placed} cutpoints={data.cutpoints} withFabric from="/frontier" lens="growth"
+            frontier={{ ...frontier, band }} since={e.previous?.label} />
+        </div>
+        <div className="print:mt-6"><ActNow items={actNow} lens="growth" from="/frontier" withFabric /></div>
       </div>
-      <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-2 print:grid-cols-1">
-        <ActNow items={actNow} lens="growth" from="/frontier" withFabric />
+      <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-3 print:grid-cols-1">
         <MovedSince moved={placed.filter((i) => i.moved)} previous={e.previous} from="/frontier" withFabric />
         <Committed items={placed} />
         <Assumptions items={data.assumptions} />

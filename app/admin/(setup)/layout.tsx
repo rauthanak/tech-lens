@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useChangesCount } from "@/lib/changes";
-import { FINANCE_SHOWN } from "@/lib/value";
 
 // Setup: everything that configures the radar, under one side menu. A route
 // group, so every address stays as it was.
@@ -24,8 +23,7 @@ const GROUPS: { title: string; items: { href: string; label: string; active: (p:
   { title: "Tata's frame", items: [
   { href: "/admin/path", label: "Path to scale", active: under("/admin/path") },
   { href: "/admin/mechanisms", label: "Mechanisms", active: under("/admin/mechanisms") },
-  { href: "/admin/assumptions", label: "Assumptions", active: under("/admin/assumptions") },
-  ...(FINANCE_SHOWN ? [{ href: "/admin/finance", label: "Finance", active: under("/admin/finance") }] : [])] }, // set aside for now
+  { href: "/admin/assumptions", label: "Assumptions", active: under("/admin/assumptions") }] },
   { title: "System", items: [
   { href: "/admin/changes", label: "Changes", active: under("/admin/changes") },
   { href: "/admin/people", label: "People", active: under("/admin/people") }] },

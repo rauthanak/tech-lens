@@ -17,7 +17,6 @@ type Tech = {
   trl?: number;
   maturity?: number;
   cases?: { fabric_id: string; fabric: string; title: string }[];
-  gaps?: { fabric_id: string; fabric: string; missing: string[] }[];
   steps?: { fabric_id: string; fabric: string; at: string; next: string }[];
 };
 
@@ -93,15 +92,6 @@ export function gateRow(item: GateItem): GateRow {
         sentence: `${techs(item.count, ["has", "have"])} suggested use cases to accept or reject`,
         sub: "Proposed by the model where the pages showed none, without citations. Only accepted ones reach the Point of View.",
         list: list.flatMap((t) => (t.cases ?? []).map((c) => ({ label: `${t.name} in ${c.fabric}`, href: page(t, c.fabric_id), note: c.title }))),
-      };
-    case "finance_missing":
-      return {
-        key: item.kind, count: item.count,
-        sentence: `${techs(item.count, ["is", "are"])} at Proof of concept or later without finance inputs`,
-        sub: "Payback and break-even are worked out once the inputs are entered on the fabric tab or in Setup › Finance.",
-        href: "/admin/finance?missing=true",
-        list: list.flatMap((t) => (t.gaps ?? []).map((g) => ({ label: `${t.name} in ${g.fabric}`, href: page(t, g.fabric_id),
-          note: `needs ${g.missing.join(", ")}` }))),
       };
     case "ready_next_step":
       return {

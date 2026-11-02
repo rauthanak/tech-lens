@@ -11,7 +11,7 @@ import Pager from "@/components/Pager";
 import { RunNowLine } from "@/components/RunSteps";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
-import { fetchRunsPreview, type RunsPreview } from "@/lib/actions";
+import { fetchRunsPreview, type RunsPreview, websitePages } from "@/lib/actions";
 import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { useMedia } from "@/lib/media";
@@ -175,7 +175,8 @@ function RadarBriefing() {
             nascent technology gets Yes or No.</li>
           <li>Publish to leaders takes a copy of every Point of View and placement as they stand: leaders see only that
             copy, never your work in progress, until the next publish. It rewrites nothing, costs no model calls and
-            keeps the editions before it.</li>
+            keeps the editions before it. It can also be done from the last step on Operations, and waits while an
+            assessment run is going.</li>
         </>}
       >
         {s && (
@@ -204,7 +205,7 @@ function RadarBriefing() {
         <div className="mt-8 rounded-card border border-line bg-white px-6 py-5">
           <p className="text-sm">
             Nothing collected yet.{" "}
-            {preview && `A collection visits up to ${preview.pages_per_source * preview.websites} pages across ${plural(preview.websites + preview.data_sources, "source")} and finds what's new on each page.`}
+            {preview && `A collection visits up to ${websitePages(preview).toLocaleString()} pages across ${plural(preview.websites + preview.data_sources, "source")} and finds what's new on each page.`}
           </p>
           <Link href="/admin/operations"
             className="mt-3 inline-block rounded-full bg-navy px-4 py-2 text-sm text-white hover:bg-navy-strong">

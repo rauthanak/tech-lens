@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import BackendError from "@/components/BackendError";
 import PageHeader from "@/components/PageHeader";
 import Grid from "@/components/frontier/Grid";
+import PlacementPanel from "@/components/frontier/PlacementPanel";
 import {
   type Frontier, frontierOf, type Item, type Lens, LENS_WORDS, pastEmerging, type Published, upOf,
 } from "@/components/frontier/items";
@@ -15,6 +16,7 @@ import { fetchJson } from "@/lib/api";
 import { useMedia } from "@/lib/media";
 import { formatAt, plural } from "@/lib/format";
 import { useHere } from "@/lib/here";
+import { useMe } from "@/lib/me";
 
 function FrontierView() {
   const params = useSearchParams();
@@ -30,6 +32,8 @@ function FrontierView() {
   const stage = params.get("stage") === "mature" ? "mature" : params.get("stage") === "all" ? "all" : "";
   const [loaded, setLoaded] = useState<{ fabric: string; data: Frontier } | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [picked, setPicked] = useState<Item | null>(null);
+  const me = useMe();
 
   useEffect(() => {
     let live = true; // a late answer for a fabric no longer chosen is dropped
@@ -74,28 +78,35 @@ function FrontierView() {
   const nearList = placed.filter((i) => frontier.near.has(i));
   const since = data?.edition.previous?.label;
   const withFabric = !shown;
+  const pickedHere = picked != null && placed.includes(picked);
+  // closing the panel puts focus back on its dot, where a keyboard user left off
+  const close = () => {
+    const dot = picked && document.querySelector<SVGElement>(`[data-dot="${CSS.escape(`${picked.tech_id}:${picked.fabric_id}`)}"]`);
+    setPicked(null);
+    dot?.focus();
+  };
 
   return (
     <div>
       <PageHeader title="Technology priorities"
-        intro="Where each emerging technology stands for Tata Communications: how soon it arrives (across), how big the prize is (up), and its priority (colour)."
+        intro="Where each emerging technology stands for Tata Communications: how soon it arrives (up the side: now at the top), how big the prize is (across), and its priority (colour), laid out as Tata's radar."
         help={<>
           <li>This is an edition: every dot and Point of View as they stood when Tata&apos;s radar team published it.
             The radar keeps working after that; this screen changes only at the next edition.</li>
           <li>Each dot is one technology in one fabric, the business line it&apos;s judged for. A technology that
             matters to several fabrics has a dot in each.</li>
-          <li>Across is how soon it arrives at scale, 0 to 10: further right is sooner. Up is how big the prize is for
-            Tata Communications, 0 to 10; View by &ldquo;{LENS_WORDS.defence.name}&rdquo; makes up the Disruption
-            threat Tata enters instead.</li>
-          <li>Colour is the priority, from P1 act now (darkest) to P6 just watch (lightest). A ring means a person set
-            it; an arrow means it moved since the edition before.</li>
-          <li>The corners: Act (sooner and bigger, past both solid lines: exactly the P1 dots), Plan (bigger, but
-            later), Wait (sooner, but smaller) and Watch (the rest). The solid lines sit at {soonHi} across and {bigHi}{" "}
-            up; the dotted ones at {soonLo}{bigLo !== soonLo ? ` across and ${bigLo} up` : ""} mark where the priority
-            changes again. The blue line marks the best bets now; the hatched band, within {band} of it, those close
-            behind.</li>
-          <li>Click a dot, or Read in the table, for its Point of View in this edition: what Tata Communications should
-            do, and why.</li>
+          <li>Up the side is how soon it arrives at scale, 0 to 10: higher is sooner, and the top is now. Across is how
+            big the prize is for Tata Communications, 0 to 10; View by &ldquo;{LENS_WORDS.defence.name}&rdquo; puts the
+            Disruption threat Tata enters across instead.</li>
+          <li>Colour is the priority, from P1 act now (darkest) to P6 no action yet (lightest), as Tata defines them. A
+            ring means a person set it; an arrow means it moved since the edition before.</li>
+          <li>The corners, as on Tata&apos;s radar: Act (now and bigger, past both solid lines: by the scores, the P1 dots), Plan
+            (bigger, but later), Watch (now, but smaller) and Wait (later and smaller). The solid lines sit at {soonHi}{" "}
+            up and {bigHi} across; the dotted ones at {soonLo} up{bigLo !== soonLo ? ` and ${bigLo} across` : " and across"}{" "}
+            mark where the priority changes again. The blue line marks the best bets now; the hatched band, within{" "}
+            {band} of it, those close behind.</li>
+          <li>Click a dot to see what placed it: the measures behind how soon and how big, with Open the Point of View.
+            Read, in the table, opens its Point of View in this edition: what Tata Communications should do, and why.</li>
         </>}>
         {data && (
           <p className="mt-2 text-sm text-ink">
@@ -133,17 +144,17 @@ function FrontierView() {
         <div className={`mt-6 ${stale ? "opacity-50" : ""}`}>
           <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
             <nav aria-label="Fabric" className="flex flex-wrap gap-1.5">
-              <Link href={href("fabric", "")} scroll={false} className={pill(!fabric)}
+              <Link href={href("fabric", "")} scroll={false} className={pill(!fabric)} onClick={() => setPicked(null)}
                 aria-current={!fabric ? "page" : undefined}>All</Link>
               {data.fabrics.map((f) => (
-                <Link key={f.id} href={href("fabric", f.id)} scroll={false} className={pill(fabric === f.id)}
+                <Link key={f.id} href={href("fabric", f.id)} scroll={false} className={pill(fabric === f.id)} onClick={() => setPicked(null)}
                   aria-current={fabric === f.id ? "page" : undefined}>{f.name}</Link>
               ))}
             </nav>
             <div className="flex flex-wrap gap-2">
               {([
                 ["View by", "lens", lens === "defence" ? "defence" : "", [["", LENS_WORDS.growth.name], ["defence", LENS_WORDS.defence.name]],
-                  "Up is how big the prize is, or the Disruption threat Tata enters (the threat to existing revenue if Tata does nothing); a dot without Tata's entry waits under Not placed yet"],
+                  "Across is how big the prize is, or the Disruption threat Tata enters (the threat to existing revenue if Tata does nothing); a dot without Tata's entry waits under Not placed yet"],
                 ["Stage", "stage", stage, [["", "Emerging"], ["mature", pastName], ["all", "All stages"]],
                   `How far a technology is on the market: Research, Pilot, Early commercial or ${pastName}. Emerging shows every stage but ${pastName}, including those not judged yet`],
                 ["Show as", "view", view, [["grid", "Grid"], ["table", "Table"]],
@@ -153,6 +164,7 @@ function FrontierView() {
                   <span className="px-2 text-xs text-muted">{label}</span>
                   {options.map(([v, name]) => (
                     <Link key={v} href={href(key, v)} scroll={false} aria-current={current === v ? "page" : undefined}
+                      onClick={() => setPicked(null)}
                       className={`rounded-full px-3.5 py-1 ${current === v ? "bg-navy text-white" : "text-ink hover:bg-ground"}`}>
                       {name}
                     </Link>
@@ -174,8 +186,16 @@ function FrontierView() {
             ) : view === "table" ? (
               <Table items={placed} from={here} lens={lens} frontier={frontier} since={since} />
             ) : (
-              <Grid key={`${shown}:${stage}:${lens}`} items={placed} cutpoints={data.cutpoints} withFabric={withFabric}
-                from={here} lens={lens} frontier={{ ...frontier, band }} since={since} />
+              // the grid takes the full width; a picked dot makes room for its panel beside it
+              <div className={`grid grid-cols-1 items-start gap-4 ${pickedHere ? "xl:grid-cols-[minmax(0,1fr)_26rem]" : ""}`}>
+                <Grid key={`${shown}:${stage}:${lens}`} items={placed} cutpoints={data.cutpoints} withFabric={withFabric}
+                  from={here} lens={lens} frontier={{ ...frontier, band }} since={since}
+                  picked={pickedHere ? picked : null} onPick={(i) => setPicked(i === picked ? null : i)} />
+                {pickedHere && (
+                  <PlacementPanel key={`${picked.tech_id}:${picked.fabric_id}`} item={picked} gridFrom={data.grid_from} cutpoints={data.cutpoints} lens={lens}
+                    admin={me?.role === "admin"} from={here} onClose={close} />
+                )}
+              </div>
             )}
           </div>
 

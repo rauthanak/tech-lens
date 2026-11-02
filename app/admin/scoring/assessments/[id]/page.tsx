@@ -23,6 +23,7 @@ import { useHere, withFrom } from "@/lib/here";
 import { blockedReason, stageWord, usePipeline } from "@/lib/pipeline";
 import { formatScore, LEGEND, SCORE_NAMES } from "@/lib/scoring";
 import { useTechLabel } from "@/lib/tech-labels";
+import { POTENTIAL_COLS, TABLE_CORNER, TIMELINE_ROWS } from "@/lib/grid";
 import { PRIORITY, scoreShade } from "@/lib/theme";
 import { PAGE_SIZE, useStoredState } from "@/lib/paging";
 import { everyVisible } from "@/lib/visible";
@@ -89,8 +90,6 @@ const EXTRAS: { code: string; short: string; label: string }[] = [
   { code: "X3", short: "Gap", label: "Capability gap: outside the three scores, feeds the Point of View" },
 ];
 
-const TIMELINE_COLS = ["far", "mid", "near"] as const; // sooner to the right, as on the leaders' grid: P1 top-right
-const POTENTIAL_ROWS = ["high", "mid", "low"] as const;
 
 type Named = { code: string; name: string };
 
@@ -257,12 +256,12 @@ function ScoringRun() {
         help={<>
           <li>One row per technology and fabric. Market, Strategic and Adoption are the three headline scores
             (0–10); Threat, Capture and Gap (disruption threat, serviceable capture, capability gap) are also
-            scored; Priority runs from P1 (act now) to P6 (just watch), Horizon from H1 (near) to H3 (far), and
+            scored; Priority runs from P1 (act now) to P6 (no action yet), Horizon from H1 (near) to H3 (far), and
             Pages counts the pages read. &ldquo;Switched off&rdquo; marks a technology switched off since: it
             isn&apos;t assessed again or shown to leaders. &ldquo;partial&rdquo; means some measures couldn&apos;t
             be scored and were left out, never counted as zero.</li>
-          <li>The priority grid counts the rows in each cell: how soon it arrives across, how big the prize is
-            down. Click a cell to filter the table. &ldquo;{VIEW_WORDS.priority_by_disruptiveness}&rdquo; swaps
+          <li>The priority grid counts the rows in each cell: how soon it arrives down the side (now at the
+            top), how big the prize is across, as on the leaders&apos; grid. Click a cell to filter the table. &ldquo;{VIEW_WORDS.priority_by_disruptiveness}&rdquo; swaps
             how big for the Disruption threat Tata enters: the damage to existing revenue if others move first.</li>
           <li>Click a row for the full reasoning behind it. Filter by fabric or search by name above the grid.</li>
           <li>Resume finishes a stopped run and keeps what&apos;s done. Redo scores works out the three scores and
@@ -286,12 +285,9 @@ function ScoringRun() {
         {run && (
           <>
             {running && (
-              <button
-                onClick={() => act(`/api/scoring/runs/${id}/terminate`, "Stopping the run; what's already assessed is kept.", "Not stopped")}
-                className="rounded-full border border-line bg-white px-2.5 py-1 text-xs hover:bg-neutral-100"
-              >
-                Terminate
-              </button>
+              <ConfirmAction label="Stop the assessment" secondary confirmLabel="Stop it" doneLabel="Stopping…"
+                question="Stop this run? What's already assessed is kept; Resume finishes the rest."
+                onConfirm={() => act(`/api/scoring/runs/${id}/terminate`, "Stopping the run; what's already assessed is kept.", "Not stopped")} />
             )}
             {stopped && (
               <ConfirmAction label="Resume" secondary cost={resumeCalls ? calls(resumeCalls.calls) : undefined}
@@ -373,18 +369,18 @@ function ScoringRun() {
               <table className="mt-2 border-separate" style={{ borderSpacing: 2 }}>
                 <thead>
                   <tr>
-                    <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">How big ↓ · How soon →</th>
-                    {TIMELINE_COLS.map((c) => (
+                    <th className="pr-2 text-right font-mono text-[10px] font-normal uppercase text-neutral-500">{TABLE_CORNER}</th>
+                    {POTENTIAL_COLS.map((c) => (
                       <th key={c} className="pb-0.5 font-mono text-[10px] font-normal uppercase text-neutral-500">{c}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {POTENTIAL_ROWS.map((r) => (
+                  {TIMELINE_ROWS.map((r) => (
                     <tr key={r}>
                       <td className="pr-2 text-right font-mono text-[10px] uppercase text-neutral-500">{r}</td>
-                      {TIMELINE_COLS.map((c) => {
-                        const cell = `${c}_${r}`;
+                      {POTENTIAL_COLS.map((c) => {
+                        const cell = `${r}_${c}`;
                         const p = gridMeta.cells[cell];
                         const n = gridCounts[cell] ?? 0;
                         const active = cellFilter === cell;
@@ -392,7 +388,7 @@ function ScoringRun() {
                           <td key={c}>
                             <button
                               onClick={() => setCellFilter(active ? null : cell)}
-                              title={`${p}, ${c} and ${r}: click to ${active ? "clear the" : "filter the table to this"} cell`}
+                              title={`${p}, ${r} and ${c}: click to ${active ? "clear the" : "filter the table to this"} cell`}
                               className={`h-11 w-16 text-center ${PRIORITY[p]} ${active ? "ring-2 ring-azure" : ""}`}
                             >
                               <span className="block font-mono text-[10px]">{p}</span>
@@ -424,11 +420,11 @@ function ScoringRun() {
                     How a cell is chosen
                   </div>
                   <p className="mt-0.5">
-                    <em>How soon</em> (across, in both views): the average of{" "}
+                    <em>How soon</em> (down the side, in both views): the average of{" "}
                     {gridMeta ? named(gridMeta.timelineFrom).join(" + ") : "the timeline measures"}.
                   </p>
                   <p className="mt-0.5">
-                    <em>How big</em> (down): the average of{" "}
+                    <em>How big</em> (across): the average of{" "}
                     {gridMeta ? named(gridMeta.potentialFrom).join(", ") : "the potential measures"}.
                   </p>
                   <p className="mt-0.5">

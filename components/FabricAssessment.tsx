@@ -5,12 +5,12 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ActButton from "@/components/ActButton";
 import AddLink from "@/components/AddLink";
+import Dialog from "@/components/Dialog";
 import BackendError from "@/components/BackendError";
 import Bottlenecks from "@/components/Bottlenecks";
 import ChoiceForm from "@/components/ChoiceForm";
 import DecisionNote from "@/components/DecisionNote";
 import FabricLabel from "@/components/FabricLabel";
-import FinanceCard from "@/components/FinanceCard";
 import FindEvidence from "@/components/FindEvidence";
 import LeaderRecord from "@/components/LeaderRecord";
 import PathToScale from "@/components/PathToScale";
@@ -25,7 +25,7 @@ import { AXIS_MEANING, formatScore, HORIZON_TERM, noPriorityReason, type Placeme
 import { LEADER_STATES } from "@/components/frontier/items";
 import { beforePublishing, type FabricOpen, toSettle } from "@/lib/open";
 import { PRIORITY, scoreShade } from "@/lib/theme";
-import { type Finance, FINANCE_SHOWN, hasFigures, type Pages, type PathStep, type SuggestedBlocker, type UseCase, useValueLists } from "@/lib/value";
+import { type Finance, type Pages, type PathStep, type SuggestedBlocker, type UseCase, useValueLists } from "@/lib/value";
 
 type State = "scored" | "scored_by_person" | "gap_accepted" | "waiting_for_tata" | "unscored";
 type Result = {
@@ -70,7 +70,7 @@ const STATE_WORDS: Record<State, string> = {
 const SCOPE_WORDS = { technology: "Judged for the technology as a whole", fabric: "Judged in this fabric",
   tata: "Entered by your team" };
 const EMPTY: FabricOpen = { fabric_id: "", fabric: "", priority: null, unscored: 0, blocking: false, waiting_for_tata: 0,
-  override_moved: false, suggested_use_cases: [], finance_missing: [], step: null, next_step: null, blockers: true, owner: true,
+  override_moved: false, suggested_use_cases: [], step: null, next_step: null, blockers: true, owner: true,
   leader: "undefined", resources: false };
 /** One row of Tata's plan's "What's recorded": ✓ or ○, what it is, and the
  *  part itself (`id`: Waiting on you's anchor). */
@@ -148,8 +148,8 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
   }, [techId, fabric]);
   const latest = useRef(load); // a save that ends after a tab change reloads the tab now chosen
   useEffect(() => { latest.current = load; load(); }, [load]);
-  // a link to a part ("#finance" from the Point of View, "#measures" from Waiting on you, "#finance" from the
-  // path's next step) lands on it once it's drawn, opening it if it's folded
+  // a link to a part ("#measures" from Waiting on you, "#path" from the next step) lands on it once it's drawn,
+  // opening it if it's folded
   const drawn = data?.assessment._id;
   useEffect(() => {
     if (drawn) jump(window.location.hash.slice(1));
@@ -183,8 +183,6 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
   const tech = data.technology.label;
   const fo = open?.find((o) => o.fabric_id === a.fabric_id);
   const undecided = (a.suggested_use_cases ?? []).filter((x) => !data.use_case_decisions[x.key]).length;
-  const poc = data.path.find((st) => st._id === "proof_of_concept");
-  const notNeeded = !data.finance.asks && !data.finance.entered;
   // what's recorded for Tata's plan: the step, an owner, the blockers, resources
   const recorded = [!!data.finance.step, !!fo?.owner, !!data.finance.bottlenecks, !!fo?.resources];
   const notAssessed = (notAssessedIn?.length ?? 0) > 0
@@ -336,12 +334,10 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
             Horizon {e.horizon ? `${e.horizon}, ${HORIZON_TERM[e.horizon] ?? ""}` : "—"}
           </span>
           <span className="ml-auto">
-            {form !== "override" && (
-              <button type="button" onClick={() => setForm("override")}
-                className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground">
-                {e.override ? "Change the override…" : "Override priority…"}
-              </button>
-            )}
+            <button type="button" onClick={() => setForm("override")}
+              className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground">
+              {e.override ? "Change the override…" : "Override priority…"}
+            </button>
           </span>
         </div>
         {(e.override ? e.computed_priority : e.priority) && (
@@ -380,12 +376,14 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
             )}
           </div>
         )}
-        {form === "override" && (
+        <Dialog open={form === "override"} onClose={() => setForm(null)} title={`Override priority in ${a.fabric}`}>
+          <p className="mb-2 text-[13px] text-muted">Computed: {e.computed_priority ?? e.priority ?? "none"}. Your priority wins and
+            the computed one stays beside it.</p>
           <ChoiceForm label="Priority" options={PRIORITIES} reasonRequired
             placeholder="why this priority, not the computed one"
             onSubmit={(v, reason) => decide({ kind: "override", tech_id: techId, fabric_id: a.fabric_id, value: v, reason }).then(done)}
             onCancel={() => setForm(null)} />
-        )}
+        </Dialog>
       </section>
 
       {/* each part: what it is, what you do here, where it shows up; then the part */}
@@ -488,19 +486,6 @@ export default function FabricAssessment({ techId, open, notAssessedIn, onChange
         </p>
       </Section>
 
-      {FINANCE_SHOWN && (
-      <Section id="finance" title={`Finance in ${a.fabric}`}
-        state={fo?.finance_missing.length ? { tone: "todo", label: "Figures to enter" }
-          : hasFigures(data.finance) ? { tone: "done", label: "Figures entered" }
-          : notNeeded ? { tone: "open", label: "Not needed yet" } : { tone: "open", label: "No figures yet" }}
-        closed={notNeeded}
-        what="What it could earn or protect a year, when it pays back, and the revenue it needs to break even, worked out from figures people enter."
-        todo="Enter the figures you have. Each one says where it came from; the model never writes one."
-        shows="The Point of View, and what the next step needs in Tata's plan above.">
-        <FinanceCard key={`${a.fabric_id}:${data.finance.entered?._id ?? ""}`} f={data.finance} techId={techId} fabricId={a.fabric_id}
-          askedFrom={poc ? `${poc.name} (step ${poc.order})` : undefined} onChanged={done} />
-      </Section>
-      )}
 
       {(a.watch_metrics?.length ?? 0) > 0 && (
         <details className="mt-3 rounded-card border border-line bg-white px-5 py-3">

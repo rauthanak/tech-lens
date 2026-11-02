@@ -164,7 +164,7 @@ export function Scores({ pov, changeHref }: { pov: Pov; changeHref?: (fabricId: 
 /** Why a measure has the score it has, in words: the assessor's
  *  justification with its pages, or a person's score or accepted gap with
  *  their reason, or what evidence would settle it. */
-function MeasureWhy({ m, sources }: { m: PovMeasure; sources: Source[] }) {
+export function MeasureWhy({ m, sources }: { m: PovMeasure; sources: Source[] }) {
   switch (m.state) {
     case "scored_by_person":
       return <>Scored by a person{m.model_score != null ? ` (the model gave ${formatScore(m.model_score)})` : ""}. Their reason: {m.reason ?? "none recorded"}</>;

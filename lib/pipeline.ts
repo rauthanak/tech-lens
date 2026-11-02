@@ -173,7 +173,7 @@ export function usePipelineFailure(): PipelineFailure | null {
 }
 
 /** Why a job can't start now, mirroring the backend's 409 rules, or null. */
-export function blockedReason(p: Pipeline | null, job: "collect" | "recheck" | "assess"): string | null {
+export function blockedReason(p: Pipeline | null, job: "collect" | "recheck" | "assess" | "pov"): string | null {
   if (!p) return null;
   const checking = p.signals.recheck?.status === "running";
   if (job === "collect") {
@@ -185,6 +185,11 @@ export function blockedReason(p: Pipeline | null, job: "collect" | "recheck" | "
     if (isLive(p.assess.status)) return "An assessment run is in progress.";
     if (checking) return "A check of stored pages is in progress.";
     if (p.signals.stale_pages === 0) return "Nothing to check again.";
+  }
+  if (job === "pov") { // writing them all mid-Assess would write from half-finished assessments
+    if (isLive(p.assess.status))
+      return `Waits for the assessment run to finish (${p.assess.techs_done ?? 0} of ${p.assess.techs_total ?? 0}).`;
+    if (p.pov.job?.status === "running") return "Points of View are being written.";
   }
   if (job === "assess") {
     if (isLive(p.assess.status)) return "An assessment run is in progress.";

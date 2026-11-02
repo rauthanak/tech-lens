@@ -24,10 +24,19 @@ type RunRow = {
   run_end_date_time: string | null;
   error: string | null;
   incomplete?: number;
+  planned_sources?: number; // how many sources the run reads in all
   totals: {
     sources: number; pages_visited: number; documents: number; new_documents: number;
     signals?: number; other_signals?: number; set_aside?: number;
   };
+};
+
+// while a run collects: "60 of 133", so a count of the groups started so far doesn't read as the total
+const sourcesRead = (r: RunRow, word = false) => {
+  const n = r.totals?.sources ?? 0;
+  const all = r.status === "running" ? r.planned_sources : undefined;
+  if (!all) return word ? plural(n, "source") : `${n}`;
+  return `${n} of ${word ? plural(all, "source") : all}`;
 };
 
 export default function RunsPage() {
@@ -61,7 +70,8 @@ export default function RunsPage() {
             are analysed, at about one model call each; unchanged pages cost nothing.</li>
           <li>Pages saved · new or changed: pages kept from the collection, and how many were new or had changed.
             &ldquo;Not read to the end&rdquo; counts websites with links left unvisited: each website is read up to its
-            page budget (Setup › Settings), most promising links first. What was read is kept, and the next
+            page budget (its own on its source page, or the default in Setup › Settings), most promising links first.
+            While a collection runs, Sources shows how many it has started out of all it will read. What was read is kept, and the next
             collection starts again from its start pages.</li>
           <li>Findings · pages set aside: findings on its new or changed pages, and pages set aside by a Can ignore
             rule (kept, but not used for technologies or assessments). The counts are as of the collection.</li>
@@ -106,7 +116,7 @@ export default function RunsPage() {
                     <Hood><span className="ml-2 font-mono text-xs text-neutral-500">{r.id}</span></Hood>
                     {/* on a phone, the other columns in one line */}
                     <span className="mt-0.5 block text-xs text-neutral-600 sm:hidden">
-                      {plural(r.totals?.sources ?? 0, "source")} · {(r.totals?.new_documents ?? 0).toLocaleString()} new or changed pages
+                      {sourcesRead(r, true)} · {(r.totals?.new_documents ?? 0).toLocaleString()} new or changed pages
                       {r.totals?.signals !== undefined && ` · ${plural(r.totals.signals + (r.totals.other_signals ?? 0), "finding")}`}
                     </span>
                   </td>
@@ -125,7 +135,7 @@ export default function RunsPage() {
                   <td className="hidden px-4 py-2.5 font-mono text-xs sm:table-cell">
                     {duration(r.run_start_date_time, r.run_end_date_time)}
                   </td>
-                  <td className="hidden px-4 py-2.5 sm:table-cell">{r.totals?.sources ?? 0}</td>
+                  <td className="hidden px-4 py-2.5 sm:table-cell">{sourcesRead(r)}</td>
                   <td className="hidden px-4 py-2.5 sm:table-cell">
                     {(r.totals?.documents ?? 0).toLocaleString()}
                     <span className="text-neutral-500"> · {(r.totals?.new_documents ?? 0).toLocaleString()} new or changed</span>

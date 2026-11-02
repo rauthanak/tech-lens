@@ -16,7 +16,7 @@ import { fetchJson } from "@/lib/api";
 import { formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
 import { useStoredStart, useStoredState } from "@/lib/paging";
-import { usePipeline } from "@/lib/pipeline";
+import { blockedReason, usePipeline } from "@/lib/pipeline";
 import { LEGEND, HORIZON_TERM } from "@/lib/scoring";
 import { useTechLabel } from "@/lib/tech-labels";
 import { LIVE_DOT, PRIORITY } from "@/lib/theme";
@@ -118,7 +118,9 @@ function PovLibrary() {
           <li>&ldquo;New since written&rdquo; counts pages collected about the technology after its Point of View
             was written.</li>
           <li>Leaders see a Point of View only as the latest published edition holds it; the first line at the top says how
-            many were written after it, and Publish on the Briefing sends them.</li>
+            many were written after it, and Publish (on the Briefing, or the last step on Operations) sends them.</li>
+          <li>Write them and Rewrite all wait while an assessment run is going, so none is written from a
+            half-finished assessment; the button says so.</li>
           <li>Technologies assessed but without a Point of View yet are counted at the top. The link opens them on
             Technologies, where you can write one (about 1 model call) or all of them.</li>
           <li>A Point of View explains its assessment in Tata Communications&apos; house format, and every number
@@ -170,7 +172,7 @@ function PovLibrary() {
                 <span>{plural(waiting, "technology has", "technologies have")} a newer assessment than its Point of View
                   (or none yet).</span>
                 <ConfirmAction label="Write them" secondary cost={calls(waiting)} confirmLabel="Write" doneLabel="Started"
-                  disabled={running ? "Points of View are being written." : null}
+                  disabled={running ? "Points of View are being written." : blockedReason(p, "pov")}
                   question={`Write ${plural(waiting, "Point of View", "Points of View")} from the latest assessments? About ${plural(waiting, "model call")}.`}
                   onConfirm={async () => { await writePovs(false); await load(); }} />
                 <Link href="/admin/technologies?state=no_pov" className="text-link hover:underline">See them →</Link>
@@ -188,7 +190,7 @@ function PovLibrary() {
                 <span>Or write every one again, for instance after the Point of View skill changes.</span>
                 <ConfirmAction label="Rewrite all" secondary cost={calls(data.assessed)}
                   question={`Rewrite all? This writes ${plural(data.assessed, "Point of View", "Points of View")}, one per assessed technology that's switched on, from its latest assessment${waiting ? `, including the ${waiting} not written yet` : ""}. Existing versions are replaced. About ${plural(data.assessed, "model call")}.`}
-                  confirmLabel="Rewrite" doneLabel="Started" disabled={running ? "Points of View are being written." : null}
+                  confirmLabel="Rewrite" doneLabel="Started" disabled={running ? "Points of View are being written." : blockedReason(p, "pov")}
                   onConfirm={async () => { await writePovs(true); await load(); }} />
               </li>
             )}

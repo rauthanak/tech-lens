@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BackendError from "@/components/BackendError";
 import ConfirmAction from "@/components/ConfirmAction";
+import Dialog from "@/components/Dialog";
 import PageHeader from "@/components/PageHeader";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
 import { formatAt, formatDay, plural } from "@/lib/format";
@@ -62,9 +63,8 @@ function AddPerson({ onAdded, onCancel }: { onAdded: (p: Person) => void; onCanc
   }
 
   return (
-    <form onSubmit={add} className="mt-5 rounded-card border border-azure/40 bg-white px-5 py-5 text-sm">
-      <h2 className="text-base font-semibold text-ink">Add a person</h2>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+    <form onSubmit={add} className="text-sm">
+      <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-neutral-700">Name
           <input required autoFocus value={form.name} onChange={set("name")} className={`mt-1 ${FIELD}`} /></label>
         <label className="block text-neutral-700">Email (what they sign in with)
@@ -227,7 +227,7 @@ export default function PeoplePage() {
     <div>
       <PageHeader title="People"
         intro="Who can sign in to the radar, and what each of them sees. Nobody else can open it."
-        right={!adding && <button type="button" onClick={() => { setAdding(true); setNotice(null); }} className={PRIMARY}>
+        right={<button type="button" onClick={() => { setAdding(true); setNotice(null); }} className={PRIMARY}>
           + Add a person</button>}
         help={<>
           <li>Each person is an administrator or a leader; the two groups below say what each sees.</li>
@@ -248,10 +248,12 @@ export default function PeoplePage() {
       </PageHeader>
 
       {error != null && <BackendError error={error} />}
-      {adding && <AddPerson onCancel={() => setAdding(false)} onAdded={(p) => {
-        setAdding(false);
-        done(`${p.name} was added as ${p.role === "admin" ? "an" : "a"} ${ROLES[p.role].one}. Tell ${first(p)} the temporary password.`);
-      }} />}
+      <Dialog open={adding} onClose={() => setAdding(false)} title="Add a person">
+        <AddPerson onCancel={() => setAdding(false)} onAdded={(p) => {
+          setAdding(false);
+          done(`${p.name} was added as ${p.role === "admin" ? "an" : "a"} ${ROLES[p.role].one}. Tell ${first(p)} the temporary password.`);
+        }} />
+      </Dialog>
       {notice && (
         <p role="status" className="mt-5 flex items-start justify-between gap-3 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900">
           <span>{notice}</span>

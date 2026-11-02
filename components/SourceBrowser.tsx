@@ -19,6 +19,7 @@ type SourceRow = {
   access?: "crawl" | "query" | "none";
   adapter?: string;
   note?: string;
+  pages?: number; // its own page budget
   progress?: Progress[];
 };
 
@@ -284,7 +285,7 @@ export default function SourceBrowser() {
                               {/* on a phone, the other columns in one line */}
                               <div className="mt-1 text-xs text-neutral-600 sm:hidden">
                                 {[ACCESS_LABELS[how], clusterName(s.cluster), COST_LABELS[s.cost] ?? s.cost,
-                                  how === "none" ? "not collectable" : s.enabled ? "On" : "Off"].join(" · ")}
+                                  how === "none" ? "not collectable" : s.enabled ? "On" : `Off${s.note ? `: ${s.note}` : ""}`].join(" · ")}
                               </div>
                             </td>
                             <td className="hidden px-4 py-2.5 text-sm sm:table-cell" title={how === "none" ? s.note : undefined}>
@@ -300,7 +301,9 @@ export default function SourceBrowser() {
                               {how === "none" ? (
                                 <span className="font-mono text-[11px] text-neutral-400">not collectable</span>
                               ) : (
-                                <span className={`text-sm ${s.enabled ? "text-ink" : "text-muted"}`}>{s.enabled ? "On" : "Off"}</span>
+                                <span className={`text-sm ${s.enabled ? "text-ink" : "text-muted"}`}>{s.enabled ? "On" : "Off"}
+                                  {!s.enabled && s.note && <span className="block max-w-xs text-xs">{s.note}</span>}
+                                  {s.pages && <span className="block text-xs text-muted">its own budget: {s.pages} pages</span>}</span>
                               )}
                             </td>
                             <td className="px-4 py-2.5 text-right text-sm text-link">Edit</td>

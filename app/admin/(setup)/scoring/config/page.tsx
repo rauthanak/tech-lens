@@ -10,6 +10,7 @@ import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { useHood } from "@/lib/hood";
 import { AXIS_LABELS, Measure, OpenQuestionBadge, weightShare } from "@/lib/scoring";
+import { POTENTIAL_COLS, TABLE_CORNER, TIMELINE_ROWS } from "@/lib/grid";
 import { PRIORITY } from "@/lib/theme";
 
 type ConfigDoc = {
@@ -24,8 +25,6 @@ const field =
 
 const TORA_AXES = ["market_potential", "strategic_fit", "adoption_readiness"] as const;
 
-const TIMELINE_COLS = ["near", "mid", "far"] as const;
-const POTENTIAL_ROWS = ["high", "mid", "low"] as const;
 
 export default function ConfigPage() {
   const [docs, setDocs] = useState<ConfigDoc[] | null>(null);
@@ -88,7 +87,7 @@ export default function ConfigPage() {
             codes.</li>
           <li>Priority grid: how soon it arrives (Maturity and Commercial adoption) crossed with how big the prize is
             (Addressable market, Growth, Disruption threat, Serviceable capture). Darker cells are more urgent, from
-            P1 act now to P6 just watch.</li>
+            P1 act now to P6 no action yet.</li>
           <li>The band edges split each 0–10 score into three bands: below 4, 4 to 7, and above 7 by default. Raise
             them and fewer technologies reach P1.</li>
           <li>Grid changes apply to new assessment runs, and Redo scores on a run&apos;s page applies them to its
@@ -341,15 +340,15 @@ function PriorityGridTable({ grid }: { grid: ConfigDoc }) {
   const [tLo, tHi] = (grid.timeline_cutpoints as number[]) ?? [4, 7];
   const [pLo, pHi] = (grid.potential_cutpoints as number[]) ?? [4, 7];
   const cells = grid.grid as Record<string, string>;
-  const colLabel: Record<string, string> = {
+  const rowLabel: Record<string, string> = {
     near: `Near · > ${tHi}`,
     mid: `Mid · ${tLo}–${tHi}`,
     far: `Far · < ${tLo}`,
   };
-  const rowLabel: Record<string, string> = {
-    high: `High · > ${pHi}`,
-    mid: `Mid · ${pLo}–${pHi}`,
+  const colLabel: Record<string, string> = {
     low: `Low · < ${pLo}`,
+    mid: `Mid · ${pLo}–${pHi}`,
+    high: `High · > ${pHi}`,
   };
   return (
     <div className="mt-4 overflow-x-auto">
@@ -357,9 +356,9 @@ function PriorityGridTable({ grid }: { grid: ConfigDoc }) {
         <thead>
           <tr>
             <th className="pr-2 text-right align-bottom font-mono text-[11px] font-normal uppercase tracking-wider text-neutral-500">
-              How big ↓ · How soon →
+              {TABLE_CORNER}
             </th>
-            {TIMELINE_COLS.map((c) => (
+            {POTENTIAL_COLS.map((c) => (
               <th key={c} className="pb-1 font-mono text-[11px] font-normal uppercase tracking-wider text-neutral-500">
                 {colLabel[c]}
               </th>
@@ -367,13 +366,13 @@ function PriorityGridTable({ grid }: { grid: ConfigDoc }) {
           </tr>
         </thead>
         <tbody>
-          {POTENTIAL_ROWS.map((r) => (
+          {TIMELINE_ROWS.map((r) => (
             <tr key={r}>
               <td className="pr-2 text-right font-mono text-[11px] uppercase tracking-wider text-neutral-500">
                 {rowLabel[r]}
               </td>
-              {TIMELINE_COLS.map((c) => {
-                const p = cells[`${c}_${r}`];
+              {POTENTIAL_COLS.map((c) => {
+                const p = cells[`${r}_${c}`];
                 return (
                   <td key={c} className={`h-14 w-28 text-center font-semibold ${PRIORITY[p] ?? "bg-neutral-100"}`}>
                     {p}
@@ -385,7 +384,7 @@ function PriorityGridTable({ grid }: { grid: ConfigDoc }) {
         </tbody>
       </table>
       <p className="mt-2 font-mono text-[11px] text-neutral-500">
-        P1 act now · P6 just watch — darker is more urgent
+        P1 act now · P6 no action yet — darker is more urgent
       </p>
     </div>
   );

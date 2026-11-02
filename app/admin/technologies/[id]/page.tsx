@@ -11,6 +11,7 @@ import DecisionNote from "@/components/DecisionNote";
 import AddEvidence from "@/components/AddEvidence";
 import FabricAssessment from "@/components/FabricAssessment";
 import FindEvidence from "@/components/FindEvidence";
+import ManageTechnology from "@/components/ManageTechnology";
 import TechAnswers from "@/components/TechAnswers";
 import TechHistory from "@/components/TechHistory";
 import WaitingOnYou from "@/components/WaitingOnYou";
@@ -22,8 +23,8 @@ import Pager from "@/components/Pager";
 import SignalItem from "@/components/SignalItem";
 import SignalPanel from "@/components/SignalPanel";
 import { calls, resumeAssessment, startAssessment, startClassify } from "@/lib/actions";
-import { errorText, fetchJson, sendJson } from "@/lib/api";
-import { andList, formatAt, formatDay, formatTime, orList, plural } from "@/lib/format";
+import { fetchJson, sendJson } from "@/lib/api";
+import { formatAt, formatDay, formatTime, orList, plural } from "@/lib/format";
 import type { FabricOpen } from "@/lib/open";
 import { useHere, withFrom } from "@/lib/here";
 import { useHood } from "@/lib/hood";
@@ -86,25 +87,7 @@ type Doc = {
   copies?: number; // collected more than once (it changed): one row, its newest copy
 };
 
-const field = "mt-1 block w-56 rounded border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
 const secondary = "rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground disabled:opacity-50";
-
-/** What POST /technologies/{id}/merge says it carried over, beside the technology. */
-type Merged = { merge?: { absorbed: { id: string; name: string }[]; choices_moved: number; catalog_carried: boolean;
-  conflicts: { kept: string; dropped: string; from: string }[] } };
-
-/** The notice after a merge of `typed` into `into`, from what the merge carried over (parts with nothing left out). */
-function mergedNotice(r: Merged, into: string, typed: string): string {
-  const m = r.merge;
-  if (!m) return `Merged. ${into} keeps its name and now has the merged pages.`;
-  const x = m.absorbed.length ? andList(m.absorbed.map((a) => a.name)) : typed;
-  let text = `Merged. ${into} now has ${x}'s pages`;
-  text += m.choices_moved > 0 ? `; ${m.choices_moved} of ${x}'s choices moved to ${into}.` : ".";
-  if (m.conflicts.length)
-    text += ` ${into}'s own choice was kept for: ${m.conflicts.map((c) => `${c.kept} (${c.from} had: ${c.dropped})`).join("; ")}.`;
-  if (m.catalog_carried) text += ` ${x}'s catalog membership moved to ${into}.`;
-  return text;
-}
 
 const FINDINGS = 5; // the top findings, in the Briefing's order; "View all" for the rest
 
@@ -138,11 +121,7 @@ function TechnologyHub() {
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [manage, setManage] = useState(false);
-  const [rename, setRename] = useState("");
-  const [alias, setAlias] = useState("");
-  const [mergeName, setMergeName] = useState("");
   const [fullDescription, setFullDescription] = useState(false);
   const [evidence, setEvidence] = useState<"findings" | "pages">("findings");
 
@@ -150,7 +129,6 @@ function TechnologyHub() {
     fetchJson<Summary>(`/api/technologies/${id}/summary`)
       .then((d) => {
         setS(d);
-        setRename((current) => current || d.technology.name);
         return fetchJson<{ hits: FoundHit[]; total: number }>(
           `/api/signals/found?sort=briefing&tech=${encodeURIComponent(d.technology.name)}&limit=${FINDINGS}`);
       })
@@ -174,18 +152,6 @@ function TechnologyHub() {
       .catch((e) => { if (!ask.signal.aborted) setError(e); });
     return () => ask.abort();
   }, [id, docStart, setDocStart, progress]);
-
-  async function act<T>(fn: () => Promise<T>, done: string | ((r: T) => string)) {
-    setNotice(null);
-    try {
-      const r = await fn();
-      setNotice(typeof done === "function" ? done(r) : done);
-      refreshTechLabels();
-      load();
-    } catch (e) {
-      setNotice(errorText(e));
-    }
-  }
 
   async function writePov() {
     await sendJson(`/api/scoring/runs/${s!.assessment!.scoring_run_id}/pov/${id}`, "POST", {});
@@ -319,9 +285,17 @@ function TechnologyHub() {
         help={<>
           <li>Above every tab: the fabrics it was assessed in, where it is on the radar&apos;s journey (collected,
             classified, assessed, its Point of View written, in the leaders&apos; view, the screen Tata&apos;s leaders read), and
-            the Next step that moves it on; its button shows the cost and asks before starting. Manage renames it,
-            merges other names into it or switches it off, at no model cost.</li>
-          <li>Overview: the Point of View&apos;s verdict, its priority in each fabric (P1 act now to P6 just watch; H1 near
+            the Next step that moves it on; its button shows the cost and asks before starting. Manage… opens a box to rename
+            it, bring in a name filed under another technology, merge another technology into it, or leave it out of
+            assessments, each part saying when to use it, at no model cost.</li>
+          <li>Find evidence searches down this one technology, under all its names: it opens a box where you choose
+            where to look (the radar&apos;s research papers, grants and patents, research counts per year, the radar&apos;s
+            websites, the whole web; a greyed-out place says why) and how many per place, and shows the cost before
+            Find. Add evidence reads links or files you have. Both open over the page; Esc or Cancel closes them.
+            Each place can take its own number. When it ends, What now says the one thing to do next.
+            The same Find evidence sits beside each gap below: a measure that couldn&apos;t be scored, a use case
+            without a size (Find its market size).</li>
+          <li>Overview: the Point of View&apos;s verdict, its priority in each fabric (P1 act now to P6 no action yet; H1 near
             to H3 far), and Waiting on you: first what needs a person before its Point of View goes to leaders, then what
             the owner&apos;s record hasn&apos;t got yet. Each item opens the fabric at the part it&apos;s done in.</li>
           <li>Overview also says whether it&apos;s in the catalog, Tata&apos;s own list of emerging technologies (Add to or
@@ -344,8 +318,8 @@ function TechnologyHub() {
             View), and every choice people made about it, who made it, when and why, with Undo.</li>
         </>}
         right={
-          <button type="button" onClick={() => setManage(!manage)} aria-expanded={manage}
-            className="text-sm text-link hover:underline">Manage {manage ? "▴" : "▾"}</button>
+          <button type="button" onClick={() => setManage(true)}
+            className="text-sm text-link hover:underline">Manage…</button>
       }>
         {a && a.fabrics.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -353,68 +327,24 @@ function TechnologyHub() {
           </div>
         )}
         <JourneyLine steps={journey} />
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-azure/30 bg-azure/5 px-4 py-2.5 text-sm">
+        <div id="next-step" className="mt-3 flex scroll-mt-4 flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-azure/30 bg-azure/5 px-4 py-2.5 text-sm">
           <p className="min-w-0 flex-1 basis-72"><b className="font-semibold">Next step:</b> {next}</p>
           {main && <div className="flex flex-wrap items-center gap-3">{main}</div>}
         </div>
         {s.state !== "off" && ( // kept while it's assessed: an Add evidence job may be what's assessing it
-          <div className="mt-3"><AddEvidence techId={id} name={name} assessCalls={s.estimate.assess_calls} hasPov={!!s.pov} onDone={load} /></div>
+          <div className="mt-3 flex flex-wrap items-start gap-2">
+            {/* the vertical search, on every technology; the Next step offers it too when its evidence is thin */}
+            {main !== lookForMore && !(status === "thin" && !a) && <FindEvidence gap={{ kind: "technology", tech_id: id }} only="button" onDone={load} />}
+            <AddEvidence techId={id} name={name} assessCalls={s.estimate.assess_calls} hasPov={!!s.pov} onDone={load} />
+          </div>
         )}
         <FindEvidence gap={{ kind: "technology", tech_id: id }} only="past" />
       </PageHeader>
 
-      {notice && <p className="mt-3 text-xs text-muted">{notice}</p>}
+      <ManageTechnology key={manage ? "open" : "shut"} id={id} t={t} name={name} open={manage} onClose={() => setManage(false)}
+        onChanged={() => { refreshTechLabels(); load(); }} />
 
-      {manage && (
-        <div className="mt-5 rounded-card border border-line bg-white px-5 py-4">
-          <div className="font-mono text-[11px] uppercase tracking-wider text-neutral-500">
-            Aliases — the names found on pages that make up this technology
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {t.aliases.map((x) => <span key={x} className="rounded-full bg-navy/5 px-2 py-0.5 text-[11px] text-ink">{x}</span>)}
-          </div>
-          <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3 border-t border-neutral-100 pt-4 text-sm">
-            <label>
-              Rename <span className="text-xs text-muted">(capitals are kept for display)</span>
-              <input className={field} value={rename} onChange={(e) => setRename(e.target.value)} />
-            </label>
-            <button className={secondary} onClick={() =>
-              act(() => sendJson(`/api/technologies/${id}`, "PUT", { name: rename, enabled: t.enabled }), "Renamed. Its pages now carry the new name.")}>
-              Save name
-            </button>
-            <label>
-              Claim a name from another technology
-              <input className={field} placeholder="the exact name" value={alias} onChange={(e) => setAlias(e.target.value)} />
-            </label>
-            <button className={secondary} disabled={!alias.trim()} onClick={() =>
-              act(() => sendJson(`/api/technologies/${id}/claim_alias`, "POST", { alias: alias.trim() }), "Name claimed. Its pages moved here.")}>
-              Claim
-            </button>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={t.enabled} onChange={(e) =>
-                act(() => sendJson(`/api/technologies/${id}`, "PUT", { name: t.name, enabled: e.target.checked }), "Saved.")} />
-              {t.enabled ? "Switched on: assessment runs assess it"
-                : `Switched off${t.switched_off_at ? ` on ${formatAt(t.switched_off_at, t.switched_off_tz)}` : ""}: tick to switch it back on`}
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3 border-t border-neutral-100 pt-4 text-sm">
-            <label>
-              Merge another technology into this one
-              <input className={`${field} w-72`} placeholder="its exact name, e.g. ai agents" value={mergeName}
-                onChange={(e) => setMergeName(e.target.value)} />
-            </label>
-            <ConfirmAction label={`Merge into ${name}`} secondary confirmLabel="Merge"
-              disabled={mergeName.trim() ? null : "Type the name of the technology to merge."}
-              question={`Merge ${mergeName.trim()} into ${name}? ${mergeName.trim()}'s pages, names and the choices people made on it `
-                + `(changes, priorities, scores, Tata's plan) move to ${name}, and ${mergeName.trim()} is removed. `
-                + `Where both have a choice on the same thing, ${name}'s is kept. This can't be undone.`}
-              onConfirm={() => act(() => sendJson<Merged>(`/api/technologies/${id}/merge`, "POST", { others: [mergeName.trim()] }),
-                (r) => mergedNotice(r, name, mergeName.trim()))} />
-          </div>
-        </div>
-      )}
-
-      <nav aria-label="Parts of this page" className="mt-6 flex gap-1 overflow-x-auto border-b border-line">
+      <nav aria-label="Parts of this page" className="mt-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line">
         {TABS.map(([key, label]) => (
           <Link key={key} href={tabHref(key)} scroll={false} replace aria-current={tab === key ? "page" : undefined}
             className={`-mb-px shrink-0 border-b-2 px-2 py-2 text-sm sm:px-3.5 ${tab === key ? "border-navy font-medium text-ink" : "border-transparent text-muted hover:text-ink"}`}>
@@ -447,7 +377,7 @@ function TechnologyHub() {
                     </li>
                   ))}
                 </ul>
-                <p className="mt-1.5 text-[12px] text-muted">P1 act now to P6 just watch. Click a fabric for why, and to change it.</p>
+                <p className="mt-1.5 text-[12px] text-muted">P1 act now to P6 no action yet. Click a fabric for why, and to change it.</p>
               </>
             )}
             {a && a.measures.of > 0 && (

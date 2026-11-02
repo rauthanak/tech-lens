@@ -8,7 +8,7 @@ import PageHeader from "@/components/PageHeader";
 import SavedNote from "@/components/SavedNote";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
 import { Fabric, OpenQuestionBadge } from "@/lib/scoring";
-import { FINANCE_SHOWN, useValueLists } from "@/lib/value";
+import { useValueLists } from "@/lib/value";
 
 const field =
   "mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -47,7 +47,6 @@ export default function FabricsPage() {
         key_metrics: selected.key_metrics ?? "",
         bottlenecks: selected.bottlenecks ?? [],
         cautions: selected.cautions ?? "",
-        finance_defaults: selected.finance_defaults ?? { margin_low: null, margin_high: null, loss_without: null, loss_with: null },
       });
       configChanged();
       setSaved(true);
@@ -179,24 +178,6 @@ export default function FabricsPage() {
               <input className={field} value={selected.cautions ?? ""} onChange={(e) => setSelected({ ...selected, cautions: e.target.value })} />
             </label>
           </fieldset>
-          {FINANCE_SHOWN && <fieldset className="space-y-3 border-t border-neutral-100 pt-4">
-            <legend className="text-sm font-semibold">Finance defaults</legend>
-            <p className="text-xs text-neutral-500">Used on the finance screen of every technology in this fabric unless one sets its own.
-              Shares, from 0 to 100%; leave blank until Tata gives them. Loss rates apply where the revenue counts as protected
-              (a lever that protects contribution): only the difference between them is counted.</p>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {([["margin_low", "Margin, from %"], ["margin_high", "Margin, to %"], ["loss_without", "Loss rate without it %"],
-                ["loss_with", "Loss rate with it %"]] as const).map(([k, label]) => (
-                <label key={k} className="text-xs text-neutral-600">{label}
-                  <input className={field} type="number" min={0} max={100}
-                    value={selected.finance_defaults?.[k] != null ? Math.round((selected.finance_defaults[k] as number) * 100) : ""}
-                    onChange={(e) => setSelected({ ...selected, finance_defaults: {
-                      ...(selected.finance_defaults ?? { margin_low: null, margin_high: null, loss_without: null, loss_with: null }),
-                      [k]: e.target.value === "" ? null : Number(e.target.value) / 100 } })} />
-                </label>
-              ))}
-            </div>
-          </fieldset>}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={selected.enabled}
               onChange={(e) => setSelected({ ...selected, enabled: e.target.checked })} />

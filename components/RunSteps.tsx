@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import ConfirmAction from "@/components/ConfirmAction";
 import { PublishLink } from "@/components/LeadersSee";
-import { editionName } from "@/components/PublishEdition";
+import { editionName, usePublish } from "@/components/PublishEdition";
 import { assessQuestion, assessSet, calls, organizeTechnologies, resumeAssessment, runCalls, startCheck, startClassify, writePovs } from "@/lib/actions";
 import { fetchJson, sendJson } from "@/lib/api";
 import { formatAt, plural } from "@/lib/format";
@@ -38,6 +38,8 @@ export type RunRecord = {
   totals: { sources: number; pages_visited: number; documents: number; new_documents: number;
     signals?: number; other_signals?: number; set_aside?: number };
   sources: { source_end_date_time: string | null; error: string | null }[];
+  planned_sources?: number; // how many sources the run reads in all, known from its start
+  substage_history?: { stage: string; substage: string; at: string }[];
   resolve?: { status: string; error?: string } & Record<string, unknown>;
   link?: Link | null; // Organize's second part: known technologies named on its pages
   classify?: { id: string; status: string; total: number; done: number; failed: number; failed_why?: string[];
@@ -104,10 +106,10 @@ type Step = {
 const STEP_OF: Record<string, number> = { starting: 0, orchestrating: 0, crawling: 0, resolving: 1, linking: 1,
   classifying: 2, done: 3 };
 
-function Progress({ done, of, what }: { done: number; of: number; what: string }) {
+function Progress({ done, of, what, whats }: { done: number; of: number; what: string; whats?: string }) {
   return (
     <div className="max-w-md">
-      <p>{done.toLocaleString()} of {plural(of, what)} done</p>
+      <p>{done.toLocaleString()} of {plural(of, what, whats)} done</p>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-neutral-100">
         <div className="h-full bg-azure" style={{ width: `${of ? Math.min(100, (100 * done) / of) : 0}%` }} />
       </div>
@@ -165,6 +167,7 @@ function useSince(ask: boolean, composed?: number): Since {
  *  latest run reads what waits now (the pipeline) and offers actions. */
 function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
   const pipeline = usePipeline();
+  const publishPanel = usePublish(); // step 6 publishes here, with the Briefing's own panel
   const after = run.after;
   const latest = !after?.next_collection;
   const p = latest ? pipeline : null;
@@ -180,7 +183,8 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
   // 1 · collect and read pages
   const s1 = ended(0);
   const read = run.sources.filter((s) => s.source_end_date_time).length;
-  const of = Math.max(run.sources.length, t.sources);
+  const of = Math.max(run.sources.length, run.planned_sources ?? t.sources);
+  const group = (run.substage_history ?? []).filter((e) => e.stage === "crawling").at(-1)?.substage.replace("supervisor ", "").toUpperCase();
   const broken = run.sources.filter((s) => s.error).length;
   const unread = (run.analysis_errors ?? []).reduce((n, e) => n + e.pages, 0);
   const check = p?.signals.recheck?.status === "running" ? p.signals.recheck : null;
@@ -188,11 +192,11 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
   const collect: Step = {
     title: "Collect: read pages", who: "You start it", state: s1,
     does: "Visits the switched-on sources, keeps the pages that are new or changed, and reads each one for its summary, the technologies it names and its findings.",
-    brief: s1 === "active" ? `collecting, ${read} of ${plural(of, "source")} read`
+    brief: s1 === "active" ? `collecting, ${read} of ${plural(of, "source")} read${group ? `, now group ${group}` : ""}`
       : s1 === "failed" ? `failed: ${run.error ?? "no reason was recorded"}` : s1 === "stopped" ? "stopped" : undefined,
     lines: [
       s1 === "active" && <Progress done={read} of={of} what="source" />,
-      <p key="c">{plural(t.sources, "source")} · {plural(t.documents, "page")} saved, {t.new_documents.toLocaleString()} new or changed</p>,
+      <p key="c">{plural(s1 === "active" ? of : t.sources, "source")} · {plural(t.documents, "page")} saved, {t.new_documents.toLocaleString()} new or changed</p>,
       t.signals !== undefined && (
         <p key="f">{plural(t.signals + (t.other_signals ?? 0), "finding")} · {plural(t.set_aside ?? 0, "page")} set aside by a Can ignore rule</p>
       ),
@@ -232,8 +236,8 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
       organizingNow ? <Live key="o">Organizing again now (Organize now).</Live>
         : s2 === "active" && <Live key="o">Merging the names on the new pages…</Live>,
       r?.status === "completed" && (
-        <p key="d">Merged {Number(r.raw_strings ?? 0).toLocaleString()} names from every page collected so far; the radar then
-          knew {plural(Number(r.technologies ?? 0), "technology", "technologies")}.</p>
+        <p key="d">Merged {Number(r.raw_strings ?? 0).toLocaleString()} names from {r.replace || !r.new_pages ? "every page collected so far"
+          : `the ${plural(Number(r.new_pages), "new page")}`}; the radar then knew {plural(Number(r.technologies ?? 0), "technology", "technologies")}.</p>
       ),
       s2 === "failed" && <Note key="x" tone="failed">Didn&apos;t finish: {r?.error ?? "no reason was recorded"}.</Note>,
       s2 === "next" && <Note key="n">Runs once collecting finishes.</Note>,
@@ -275,7 +279,7 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
       : s3 === "stopped" ? `stopped before the end, with ${plural(left, "technology", "technologies")} left to judge`
       : s3 === "failed" ? `failed: ${c?.error ?? "no reason was recorded"}` : undefined,
     lines: [
-      s3 === "active" && judging && <Progress done={judging.done} of={judging.total} what="technology with new pages" />,
+      s3 === "active" && judging && <Progress done={judging.done} of={judging.total} what="technology with new pages" whats="technologies with new pages" />,
       !c && classifyingNow && runLive && (
         <Note key="w">Waiting for the Classify run already going to finish; then it judges what that one left.</Note>
       ),
@@ -332,7 +336,7 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
       : resume?.kind === "resume" ? `an assessment run stopped with ${plural(resume.count, "technology", "technologies")} left`
       : toAssess ? `${plural(toAssess.count, "technology is", "technologies are")} ready to assess` : undefined,
     lines: [
-      s4 === "active" && <Progress done={p!.assess.techs_done ?? 0} of={p!.assess.techs_total ?? 0} what="technology" />,
+      s4 === "active" && <Progress done={p!.assess.techs_done ?? 0} of={p!.assess.techs_total ?? 0} what="technology" whats="technologies" />,
       resume?.kind === "resume" && (
         <Note key="r" tone="warn">The assessment run of {formatAt(resume.started_at)} stopped with {plural(resume.count, "technology", "technologies")} left.</Note>
       ),
@@ -394,7 +398,7 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
       ),
     ],
     action: !writing && toWrite > 0 && (
-      <ConfirmAction label="Write them" cost={calls(toWrite)}
+      <ConfirmAction label="Write them" cost={calls(toWrite)} disabled={blockedReason(p, "pov")}
         question={`Write ${plural(toWrite, "Point of View", "Points of View")}? About ${plural(toWrite, "model call")}.`}
         onConfirm={() => writePovs(false)} />
     ),
@@ -420,13 +424,14 @@ function useSteps(run: RunRecord): { steps: Step[]; latest: boolean } {
           {editionName(lastEdition)}, {formatAt(lastEdition.published_at, lastEdition.tz)}.</p>
       ),
       s6 === "waits" && <p key="w">Since {seen ? editionName(seen) : "the edition"} leaders see: {changes.join(", ")}.</p>,
+      s6 === "waits" && <div key="p">{publishPanel.panel}</div>, // publish here, as on the Briefing
       s6 === "none" && (
         <Note key="n">{seen ? `Nothing new to publish: leaders see ${editionName(seen)}, published ${formatAt(seen.published_at, seen.tz)}.`
           : "Nothing published yet."}</Note>
       ),
       s6 === "missed" && <Note key="n">No edition was published before the next collection.</Note>,
     ],
-    action: s6 === "waits" && <span className="text-sm"><PublishLink>Publish on the Briefing →</PublishLink></span>,
+    action: s6 === "waits" && <span className="text-sm"><PublishLink>Or on the Briefing →</PublishLink></span>,
   };
 
   return { steps: [collect, organize, classify, assess, write, publish], latest };

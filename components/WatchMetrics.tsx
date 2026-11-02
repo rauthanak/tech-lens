@@ -60,13 +60,15 @@ export function Sign({ m, owned }: { m: WatchMetric; owned?: { techId: string; o
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(m.inflection_threshold ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const save = async () => {
     setError(null);
+    setSaving(true);
     try {
       await decide({ kind: "watch_threshold", tech_id: owned!.techId, key: m.key, value: text });
       setEditing(false);
       owned!.onChanged();
-    } catch (e) { setError(errorText(e)); }
+    } catch (e) { setError(errorText(e)); } finally { setSaving(false); }
   };
   return (
     <div className="px-5 py-4 text-sm print:px-0">
@@ -86,8 +88,8 @@ export function Sign({ m, owned }: { m: WatchMetric; owned?: { techId: string; o
                 <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} aria-label="Threshold"
                   className="block w-full rounded border border-neutral-300 px-2 py-1.5 text-[13px]" />
                 <span className="flex items-center gap-3">
-                  <button type="button" onClick={save} disabled={!text.trim()}
-                    className="rounded-full bg-navy px-3.5 py-1 text-[13px] text-white disabled:opacity-40">Save</button>
+                  <button type="button" onClick={save} disabled={!text.trim() || saving}
+                    className="rounded-full bg-navy px-3.5 py-1 text-[13px] text-white disabled:opacity-40">{saving ? "Saving…" : "Save"}</button>
                   <button type="button" onClick={() => setEditing(false)} className="text-[13px] text-muted">Cancel</button>
                   <span className="text-xs text-muted">Kept at every assessment; the radar judges the sign against it.</span>
                 </span>

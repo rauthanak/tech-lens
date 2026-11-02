@@ -9,7 +9,7 @@ export default function AssumptionsPage() {
         help={<>
           <li>Each is one sentence and the day it was stated, such as &ldquo;AI infrastructure investment stays high
             through FY27&rdquo;. The leaders&apos; view shows each with &ldquo;Scenario, not forecast&rdquo;.</li>
-          <li>Publishing an edition (on the Briefing) freezes the list as it stands: an edit here shows in the leaders&apos; view from
+          <li>Publishing an edition (on the Briefing or Operations) freezes the list as it stands: an edit here shows in the leaders&apos; view from
             the next edition, and leaders keep seeing the earlier list until then.</li>
           <li>Order sets where it appears, lowest first. Click an assumption to edit or remove it. Edits cost no model
             calls and change no score.</li>

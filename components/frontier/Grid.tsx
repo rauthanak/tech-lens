@@ -7,6 +7,7 @@ import {
   HORIZON_WORDS, isPale, type Item, type Lens, LENS_WORDS, leaderName, leaderText, measuresNote, moveReason, moveText,
   overrideNote, povHref, priorityFill, upOf,
 } from "@/components/frontier/items";
+import { type Cutpoints, QUADRANTS, SOON_AXIS } from "@/lib/grid";
 import { formatScore } from "@/lib/scoring";
 import { PRIORITY } from "@/lib/theme";
 
@@ -25,14 +26,6 @@ const SPREAD = 10; // spacing of dots that share one point
 const FONT = 11;
 const CHAR = 0.6 * FONT; // a label's width per character, rounded up for the brand font
 const MAX_NAME = 30;
-
-// the four corners, named by where they sit: left is later, top is bigger (or more threat)
-const QUADRANTS = [
-  { name: "Plan", left: true, top: true, tint: 0.035 },
-  { name: "Act", left: false, top: true, tint: 0.075 },
-  { name: "Watch", left: true, top: false, tint: 0 },
-  { name: "Wait", left: false, top: false, tint: 0.035 },
-] as const;
 
 /** Moved to a more urgent priority (P3 → P2) or a less urgent one. */
 const movedUp = (item: Item) => !!item.moved?.from && !!item.priority && item.priority < item.moved.from;
@@ -130,21 +123,24 @@ function placeNames(dots: Dot[], obstacles: Box[], plot: Box, withFabric: boolea
 
 const score = (n: number | null) => (n == null ? "no score" : `${formatScore(n)} out of 10`);
 
-/** The 2×2: across, how soon (right is sooner); up, how big (top is bigger),
- *  or in the Defence lens the Disruption threat, both 0–10. One dot per placed
- *  item, coloured by its priority; a ring when a person set it, an arrow when
- *  its priority moved since the edition before. The frontier is a stepped
- *  line through the dots nothing beats on both axes, with a hatched band for
- *  those near it. Wheel or + − zoom, drag moves, ⌂ shows it all; clicking a
- *  dot opens its Point of View. */
-export default function Grid({ items, cutpoints, withFabric, from, lens, frontier, since }: {
+/** The 2×2 as Tata draws it: up, how soon (top is now); across, how big
+ *  (right is bigger), or in the Defence lens the Disruption threat, both 0–10.
+ *  One dot per placed item, coloured by its priority; a ring when a person set
+ *  it, an arrow when its priority moved since the edition before. The frontier
+ *  is a stepped line through the dots nothing beats on both axes, with a
+ *  hatched band for those near it. Wheel or + − zoom, drag moves, ⌂ shows it
+ *  all; clicking a dot picks it (`onPick`: what placed it), else opens its
+ *  Point of View. */
+export default function Grid({ items, cutpoints, withFabric, from, lens, frontier, since, picked, onPick }: {
   items: Item[];
-  cutpoints: { how_soon: [number, number]; how_big: [number, number] };
+  cutpoints: Cutpoints;
   withFabric: boolean;
   from: string; // the address a Point of View comes back to
   lens: Lens;
   frontier: { on: Set<Item>; near: Set<Item>; band: number };
   since?: string; // the edition before, for "moved since"
+  picked?: Item | null;
+  onPick?: (item: Item) => void;
 }) {
   const words = LENS_WORDS[lens];
   const router = useRouter();
@@ -210,6 +206,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
 
   function open(item: Item) {
     if (dragged.current) return;
+    if (onPick) return onPick(item);
     const href = povHref(item, from);
     if (href) router.push(href);
   }
@@ -251,21 +248,21 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
   // (its dots, zoom, size or what's up), not on every hover
   const { quadrants, dots, blocks, named } = useMemo(() => {
     const quadrants = QUADRANTS.map((q0) => {
-      const q = { ...q0, sub: `${q0.left ? "later" : "sooner"} · ${(q0.top ? words.more : words.less).toLowerCase()}` };
-      const [x0, x1] = q.left ? [sx(D0), sx(midSoon)] : [sx(midSoon), sx(D1)];
-      const [y0, y1] = q.top ? [sy(D1), sy(midBig)] : [sy(midBig), sy(D0)];
+      const q = { ...q0, sub: `${q0.top ? "now" : "later"} · ${(q0.right ? words.more : words.less).toLowerCase()}` };
+      const [x0, x1] = q.right ? [sx(midBig), sx(D1)] : [sx(D0), sx(midBig)];
+      const [y0, y1] = q.top ? [sy(D1), sy(midSoon)] : [sy(midSoon), sy(D0)];
       const seen = { x0: Math.max(plot.x0, x0), x1: Math.min(plot.x1, x1), y0: Math.max(plot.y0, y0), y1: Math.min(plot.y1, y1) };
       // the name goes in the quadrant's outer corner, while enough of it shows
       const shown = seen.x1 - seen.x0 >= 96 && seen.y1 - seen.y0 >= 44;
-      const tx = q.left ? seen.x0 + 10 : seen.x1 - 10;
+      const tx = q.right ? seen.x1 - 10 : seen.x0 + 10;
       const ty = q.top ? seen.y0 + 19 : seen.y1 - 22;
       const w = Math.max(q.name.length * 9, q.sub.length * 6.2);
-      const label: Box = { x0: q.left ? tx : tx - w, x1: q.left ? tx + w : tx, y0: ty - 14, y1: ty + 18 };
+      const label: Box = { x0: q.right ? tx - w : tx, x1: q.right ? tx : tx + w, y0: ty - 14, y1: ty + 18 };
       return { ...q, x0, x1, y0, y1, shown, tx, ty, label };
     });
 
     const dots: Dot[] = items
-      .map((item, i) => ({ item, i, cx: sx(item.how_soon ?? 0) + offsets[i][0], cy: sy(upOf(item, lens) ?? 0) + offsets[i][1] }))
+      .map((item, i) => ({ item, i, cx: sx(upOf(item, lens) ?? 0) + offsets[i][0], cy: sy(item.how_soon ?? 0) + offsets[i][1] }))
       .filter((d) => d.cx > plot.x0 - R && d.cx < plot.x1 + R && d.cy > plot.y0 - R && d.cy < plot.y1 + R);
 
     const obstacles: Box[] = [
@@ -276,9 +273,9 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
     return { quadrants, dots, blocks, named };
   }, [items, offsets, view, width, lens, withFabric, cutpoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // the frontier, sooner to later: a stepped line through its dots, and the band
+  // the frontier, smaller to bigger: a stepped line through its dots, and the band
   // between it and the same line moved back by the band's width on both axes
-  const steps = [...frontier.on].map((i) => [i.how_soon ?? 0, upOf(i, lens) ?? 0] as const)
+  const steps = [...frontier.on].map((i) => [upOf(i, lens) ?? 0, i.how_soon ?? 0] as const)
     .sort((a, b) => a[0] - b[0] || b[1] - a[1])
     .filter((p, k, all) => k === 0 || p[0] !== all[k - 1][0] || p[1] !== all[k - 1][1]);
   const stair = (w: number) => {
@@ -307,7 +304,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
             {Object.keys(PRIORITY).map((p) => (
               <span key={p} className={`px-1 py-0.5 font-mono text-[11px] ${PRIORITY[p]}`}>{p}</span>
             ))}
-            <span className="ml-1">just watch</span>
+            <span className="ml-1">no action yet</span>
           </span>
           <span className="flex items-center gap-1.5">
             <svg width="18" height="18" aria-hidden>
@@ -370,20 +367,20 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                     fill="var(--color-navy)" fillOpacity={q.tint} />
                 ))}
                 {/* the band edges, where the priority changes */}
-                {cutpoints.how_soon.map((v) => (
-                  <line key={`s${v}`} x1={sx(v)} x2={sx(v)} y1={plot.y0} y2={plot.y1}
+                {cutpoints.how_big.map((v) => (
+                  <line key={`b${v}`} x1={sx(v)} x2={sx(v)} y1={plot.y0} y2={plot.y1}
                     stroke="var(--color-faint)" strokeDasharray="2 4" />
                 ))}
-                {cutpoints.how_big.map((v) => (
-                  <line key={`b${v}`} x1={plot.x0} x2={plot.x1} y1={sy(v)} y2={sy(v)}
+                {cutpoints.how_soon.map((v) => (
+                  <line key={`s${v}`} x1={plot.x0} x2={plot.x1} y1={sy(v)} y2={sy(v)}
                     stroke="var(--color-faint)" strokeDasharray="2 4" />
                 ))}
                 {/* the corners, split on the upper band edges (drawn solid) */}
-                <line x1={sx(midSoon)} x2={sx(midSoon)} y1={plot.y0} y2={plot.y1} stroke="var(--color-faint)" />
-                <line x1={plot.x0} x2={plot.x1} y1={sy(midBig)} y2={sy(midBig)} stroke="var(--color-faint)" />
+                <line x1={sx(midBig)} x2={sx(midBig)} y1={plot.y0} y2={plot.y1} stroke="var(--color-faint)" />
+                <line x1={plot.x0} x2={plot.x1} y1={sy(midSoon)} y2={sy(midSoon)} stroke="var(--color-faint)" />
 
                 {quadrants.filter((q) => q.shown).map((q) => (
-                  <text key={q.name} x={q.tx} y={q.ty} textAnchor={q.left ? "start" : "end"} className="pointer-events-none">
+                  <text key={q.name} x={q.tx} y={q.ty} textAnchor={q.right ? "end" : "start"} className="pointer-events-none">
                     <tspan fontSize={13} fontWeight={600} letterSpacing="0.08em" fill="var(--color-navy)"
                       fillOpacity={0.7}>{q.name.toUpperCase()}</tspan>
                     <tspan x={q.tx} dy={14} fontSize={10.5} fill="var(--color-muted)">{q.sub}</tspan>
@@ -400,9 +397,9 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                 )}
 
                 {dots.map(({ item, i, cx, cy }) => (
-                  <g key={`${item.tech_id}:${item.fabric_id}:${i}`} role="link" tabIndex={0}
-                    aria-label={`${item.name}, ${item.fabric}: priority ${item.priority}${item.override ? ", set by a person" : ""}${item.moved ? `, ${moveText(item, since)}` : ""}; how soon ${score(item.how_soon)}; ${words.up.toLowerCase()} ${score(upOf(item, lens))}${frontier.on.has(item) ? "; a best bet now" : ""}${item.pov ? "; opens its Point of View" : ""}`}
-                    className={`outline-none ${item.pov ? "cursor-pointer" : ""}`}
+                  <g key={`${item.tech_id}:${item.fabric_id}:${i}`} role={onPick ? "button" : "link"} tabIndex={0} data-dot={`${item.tech_id}:${item.fabric_id}`}
+                    aria-label={`${item.name}, ${item.fabric}: priority ${item.priority}${item.override ? ", set by a person" : ""}${item.moved ? `, ${moveText(item, since)}` : ""}; how soon ${score(item.how_soon)}; ${words.up.toLowerCase()} ${score(upOf(item, lens))}${frontier.on.has(item) ? "; a best bet now" : ""}${onPick ? "; shows what placed it and its Point of View" : item.pov ? "; opens its Point of View" : ""}`}
+                    className={`outline-none ${onPick || item.pov ? "cursor-pointer" : ""}`}
                     onPointerEnter={() => { if (!drag.current?.moved) setHover(i); }}
                     onPointerLeave={() => setHover((h) => (h === i ? null : h))}
                     onFocus={() => setHover(i)} onBlur={() => setHover(null)}
@@ -412,6 +409,9 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                     }}>
                     {item.override && (
                       <circle cx={cx} cy={cy} r={R + 3.5} fill="none" stroke="var(--color-azure)" strokeWidth={1.75} />
+                    )}
+                    {picked === item && (
+                      <circle cx={cx} cy={cy} r={R + 6} fill="none" stroke="var(--color-ink)" strokeWidth={2} />
                     )}
                     <circle cx={cx} cy={cy} r={R} style={{ fill: priorityFill(item.priority) }}
                       stroke={isPale(item.priority) ? "#3f5f99" : "#fff"} strokeOpacity={isPale(item.priority) ? 0.6 : 1}
@@ -477,15 +477,15 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                 })}
               </g>
               <g fontSize={11.5} fill="var(--color-muted)">
-                <text x={plot.x0} y={height - 6}>← Later</text>
+                <text x={plot.x0} y={height - 6}>← Low</text>
                 <text x={mid(plot.x0, plot.x1)} y={height - 6} textAnchor="middle" fontWeight={600} fill="var(--color-ink)">
-                  How soon
+                  {words.axis}
                 </text>
-                <text x={plot.x1} y={height - 6} textAnchor="end">Sooner →</text>
-                <text transform={`translate(12 ${plot.y1}) rotate(-90)`}>← {words.less}</text>
+                <text x={plot.x1} y={height - 6} textAnchor="end">High →</text>
+                <text transform={`translate(12 ${plot.y1}) rotate(-90)`}>← {SOON_AXIS.low}</text>
                 <text transform={`translate(12 ${mid(plot.y0, plot.y1)}) rotate(-90)`} textAnchor="middle" fontWeight={600}
-                  fill="var(--color-ink)">{words.up}</text>
-                <text transform={`translate(12 ${plot.y0}) rotate(-90)`} textAnchor="end">{words.more} →</text>
+                  fill="var(--color-ink)">{SOON_AXIS.title}</text>
+                <text transform={`translate(12 ${plot.y0}) rotate(-90)`} textAnchor="end">{SOON_AXIS.high} →</text>
               </g>
             </>
           )}
@@ -528,7 +528,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
             )}
             {(frontier.on.has(tip.item) || frontier.near.has(tip.item)) && (
               <p className="mt-1.5">
-                {frontier.on.has(tip.item) ? "Best bet now: nothing else here is both sooner and higher up."
+                {frontier.on.has(tip.item) ? `Best bet now: nothing else here is both sooner and ${words.more.toLowerCase()}.`
                   : `Close behind: within ${frontier.band} of the best bets on both axes.`}
               </p>
             )}
@@ -542,8 +542,8 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
             {tip.item.pov?.headline && (
               <p className="mt-1.5 border-l-2 border-navy/30 pl-2 text-neutral-800">{tip.item.pov.headline}</p>
             )}
-            <p className={`mt-1.5 ${tip.item.pov ? "text-link" : "text-muted"}`}>
-              {tip.item.pov ? "Click to read its Point of View" : "No Point of View written yet"}
+            <p className={`mt-1.5 ${onPick || tip.item.pov ? "text-link" : "text-muted"}`}>
+              {onPick ? "Click to see what placed it, and open its Point of View" : tip.item.pov ? "Click to read its Point of View" : "No Point of View written yet"}
             </p>
           </div>
         )}

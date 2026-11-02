@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Dialog from "@/components/Dialog";
 import { calls } from "@/lib/actions";
 import { errorText, sendForm } from "@/lib/api";
 import { plural } from "@/lib/format";
@@ -71,13 +72,6 @@ export default function AddEvidence({ techId, name, assessCalls, hasPov, onDone 
     );
   }
 
-  if (!open)
-    return (
-      <button type="button" onClick={() => setOpen(true)}
-        className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground">
-        Add evidence: links or files
-      </button>
-    );
 
   /** Why these files can't be sent as they are, or null. */
   const tooBig = () => {
@@ -111,9 +105,14 @@ export default function AddEvidence({ techId, name, assessCalls, hasPov, onDone 
   };
 
   return (
-    <form onSubmit={start} aria-label="Add evidence"
-      className="mt-3 space-y-3 rounded-card border border-line bg-white px-4 py-3 text-sm">
-      <p className="font-semibold">Add evidence for {name}</p>
+    <>
+    <button type="button" onClick={() => setOpen(true)}
+      className="rounded-full border border-line bg-white px-3.5 py-1.5 text-sm hover:bg-ground">
+      Add evidence: links or files
+    </button>
+    <Dialog open={open} onClose={() => { setOpen(false); setError(null); }} title="Add evidence: links or files">
+    <form onSubmit={start} aria-label="Add evidence" className="space-y-3 text-sm">
+      <p className="text-muted">For {name}</p>
       <label className="block">
         <span className="font-medium">Links</span>{" "}
         <span className="text-muted">one address per line. Each is read as one page: the links on it aren&apos;t followed.</span>
@@ -183,5 +182,7 @@ export default function AddEvidence({ techId, name, assessCalls, hasPov, onDone 
       </div>
       {error && <p className="text-failed">{error}</p>}
     </form>
+    </Dialog>
+    </>
   );
 }

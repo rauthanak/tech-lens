@@ -5,11 +5,8 @@ import { useState } from "react";
 import DecisionNote from "@/components/DecisionNote";
 import { errorText } from "@/lib/api";
 import { decide } from "@/lib/decisions";
-import { type Brief, type Finance, FINANCE_SHOWN, type Need, NOTES, type PathStep, storedFinance } from "@/lib/value";
+import { type Brief, type Finance, type Need, NOTES, type PathStep, storedFinance } from "@/lib/value";
 
-// where each need is met, as a link to that part of the fabric tab
-const WHERE = { finance: ["enter it under Finance", "finance"], figures: ["worked out under Finance", "finance"],
-  assessment: ["from the use cases", "use-cases"] } as const;
 type Who = { finance?: Finance; techId: string; fabricId: string; onChanged?: () => void };
 
 /** A rung's evidence a person records (a measured cost per outcome, a named
@@ -57,8 +54,8 @@ const unwritten = (s: PathStep) => !s.evidence_needed.trim() || /^for tata to de
 
 /** What the next step needs, ticked off: "Proof for Proof of concept is in
  *  hand" (act when the proof for the next step is in hand), or what's still
- *  missing and where it goes: entered right here while finance is set aside
- *  (NeedInput), else under Finance. */
+ *  missing and where it goes: a note or price entered right here (NeedInput),
+ *  a use case from the assessment; a business-case figure the radar doesn't keep. */
 function NextRung({ next, readOnly, ...who }: Partial<Who> & { next: NonNullable<Finance["next_step"]>; readOnly?: boolean }) {
   if (!next.needs.length) return null;
   if (next.in_hand && readOnly) return (
@@ -75,11 +72,11 @@ function NextRung({ next, readOnly, ...who }: Partial<Who> & { next: NonNullable
       {next.needs.map((n) => (
         <li key={n.key} className={n.have ? "text-emerald-800" : "text-amber-900"}>
           {n.have ? "✓" : "○"} {n.label}
-          {!readOnly && (n.where === "finance" && !FINANCE_SHOWN && who.techId && who.fabricId
+          {!readOnly && (n.where === "finance" && who.techId && who.fabricId
             ? <NeedInput need={n} finance={who.finance} techId={who.techId} fabricId={who.fabricId} onChanged={who.onChanged} />
             : n.have ? null
-            : n.where === "figures" && !FINANCE_SHOWN ? <span className="text-muted"> · comes with the business case, set aside for now</span>
-            : <span className="text-muted"> · <a href={`#${WHERE[n.where][1]}`} className="text-link hover:underline">{WHERE[n.where][0]}</a></span>)}
+            : n.where === "figures" ? <span className="text-muted"> · from Tata&apos;s business case; the radar doesn&apos;t keep it</span>
+            : <span className="text-muted"> · <a href="#use-cases" className="text-link hover:underline">from the use cases</a></span>)}
         </li>
       ))}
     </ul>
@@ -123,7 +120,7 @@ function Track({ steps, at, next }: { steps: PathStep[]; at: number; next?: stri
  *  Steps whose proof isn't written yet share one line. Read-only (the Point
  *  of View): a bar that shows the step reached, or "Not set". */
 export default function PathToScale({ steps, current, next, decision, techId, fabricId, onChanged, readOnly, finance }: {
-  finance?: Finance; // what's held for the next step's evidence, entered here while finance is set aside
+  finance?: Finance; // what's held for the next step's evidence, entered here
   steps: PathStep[];
   current: Finance["step"];
   next: Finance["next_step"];

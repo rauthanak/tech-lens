@@ -11,7 +11,6 @@ export type Fabric = {
   key_metrics?: string;
   bottlenecks?: string[];
   cautions?: string;
-  finance_defaults?: { margin_low: number | null; margin_high: number | null; loss_without: number | null; loss_with: number | null };
 };
 
 export type Measure = {
@@ -69,7 +68,7 @@ export const axisTotals = (measures: Measure[]) =>
   measures.reduce<Record<string, number>>((t, m) => ({ ...t, [m.axis]: (t[m.axis] ?? 0) + (m.weight ?? 0) }), {});
 
 /** The priority and horizon codes in words, for one legend line per list. */
-export const PRIORITY_LEGEND = "Priority P1 (act now) to P6 (just watch)";
+export const PRIORITY_LEGEND = "Priority P1 (act now) to P6 (no action yet)";
 export const LEGEND = `${PRIORITY_LEGEND}; horizon H1 (near) to H3 (far).`;
 
 /** A horizon as how soon it arrives: "H2" → "mid-term". */

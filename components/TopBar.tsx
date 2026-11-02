@@ -12,7 +12,7 @@ type Item = { href: string; label: string; active: (path: string) => boolean };
 const under = (prefix: string) => (path: string) => path === prefix || path.startsWith(prefix + "/");
 const SETUP_ROUTES = ["/admin/sources", "/admin/signals/list", "/admin/scoring/fabrics",
   "/admin/scoring/measures", "/admin/scoring/config", "/admin/scoring/pending", "/admin/prompts",
-  "/admin/changes", "/admin/classification", "/admin/path", "/admin/mechanisms", "/admin/finance"];
+  "/admin/changes", "/admin/classification", "/admin/path", "/admin/mechanisms"];
 
 // One technology's result in one fabric (/admin/scoring/assessments/{run}/{id})
 // is read as part of that technology, so Technologies stays lit there; the

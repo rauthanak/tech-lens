@@ -18,6 +18,7 @@ export type Item = {
   repeats?: number[];
   why?: string | null; // a match proposed by code, not the model: why
   kept_apart?: { tech_id: string; name: string }; // the skill folded it in; code kept it apart as narrower
+  same_as_row?: number; // the skill reads it as the same technology as this earlier row of the file, which comes in new
 };
 export type Unknown = { field: Field; value: string; count: number; map_to: string | number | null; keep?: boolean | null;
   domain_id?: string };

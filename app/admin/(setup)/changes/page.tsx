@@ -43,6 +43,7 @@ const LIST_LABELS: Record<string, string> = {
 const FIELD_LABELS: Record<string, string> = {
   // Settings: collecting pages
   skip_url_patterns: "Links the crawler never follows", pages_per_source: "Page budget per source",
+  link_depth: "Levels of links to follow", links_per_level: "Links kept per level (blank: Automatic)",
   page_part_chars: "Page part size (characters)", page_part_concurrency: "Parts processed in parallel",
   lookback_days: "First-run lookback (days)",
   // Settings: judging technologies, finding evidence, time zone
@@ -50,7 +51,7 @@ const FIELD_LABELS: Record<string, string> = {
   classify_pages_cap: "Pages read per technology when judging",
   evidence_floor: "Pages needed before a technology counts as ready",
   wake_after_pages: "Flag a switched-off technology after this many new pages",
-  find_evidence_results: "Find evidence: results per search", find_evidence_daily_budget: "Find evidence: searches per day",
+  find_evidence_results: "Find evidence: results per place",
   default_time_zone: "Default time zone", emerging_availability: "Values that count as emerging",
   // scoring method
   max_dossier_tokens: "Most evidence sent per technology", timeline_cutpoints: "How soon: cut-points",
@@ -58,7 +59,7 @@ const FIELD_LABELS: Record<string, string> = {
   open_question: "Open question",
   // signals, skills, sources
   look_for: "What to look for", prompt: "Skill text", system: "Instructions sent first", entry_urls: "Start pages",
-  searches: "Saved searches", follow_outbound: "Follow links to other sites, one hop", cluster: "Kind of source",
+  searches: "Saved searches", pages: "Pages per collection", follow_outbound: "Follow links to other sites, one hop", cluster: "Kind of source",
   enabled: "Switched on", url: "URL",
   // fabrics, measures, path steps
   tcl_today: "What Tata has today", anchors: "What low, middle and high scores look like",

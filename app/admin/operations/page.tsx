@@ -136,7 +136,7 @@ function Problems() {
             ) : job === "pov" ? (
               <ConfirmAction label="Write again" secondary cost={calls(p?.pov.pending ?? 0)}
                 question={`Write the ${plural(p?.pov.pending ?? 0, "waiting Point of View", "waiting Points of View")}? About ${plural(p?.pov.pending ?? 0, "model call")}.`}
-                onConfirm={() => writePovs(false)} />
+                disabled={blockedReason(p, "pov")} onConfirm={() => writePovs(false)} />
             ) : (
               <Link href={`/admin/runs/${x.id}`} className={fixLink}>Open</Link>
             );
@@ -212,8 +212,12 @@ export default function OperationsPage() {
           <li>Latest collection: its six steps, from collecting pages to publishing to leaders.
             The Now line says which step it&apos;s on and what comes next. You start a collection; collecting,
             organizing and classifying then run by themselves. Assessing, writing Points of View and publishing wait for
-            you: the step that waits is marked, and its button shows the model-call cost before anything starts. Open
+            you: the step that waits is marked, and its button shows the model-call cost before anything starts.
+            Publish works right in the last step, as on the Briefing. While an assessment runs, Write them and Publish
+            are greyed out with the reason, so nothing is written or published from a half-finished assessment. Open
             the collection for its sources and pages.</li>
+          <li>While a collection runs, Collect counts the sources read out of all it will read, and names the group
+            (H1, H2, H3) it is on.</li>
           <li>Each step says where it stands, what it did (times in the zone of the person who started it), and in
             grey what the step does. A button you click says Started, or why it didn&apos;t start; the step then shows
             its progress.</li>
@@ -221,7 +225,7 @@ export default function OperationsPage() {
             Check again. That&apos;s optional; new pages are always checked. Organize now runs the organizing at once
             instead of waiting for the next collection.</li>
           <li>Problems lists real failures only, each with its fix beside it. Coverage notes websites that reached
-            their page limit, so some of their pages weren&apos;t visited.</li>
+            their page limit (each source&apos;s own, or the default), so some of their pages weren&apos;t visited.</li>
           <li>History, its own tab, lists every run that used the model, newest first, with its tokens and Cost by
             skill.</li>
           <li>The Technical details switch adds each run&apos;s id, and whether the API and the database are

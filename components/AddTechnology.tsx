@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import ConfirmAction from "@/components/ConfirmAction";
+import Dialog from "@/components/Dialog";
 import { calls } from "@/lib/actions";
 import { errorText, fetchJson, sendJson } from "@/lib/api";
 import { SOURCE_WORDS, type ListItem, type Source } from "@/lib/classification";
@@ -113,11 +114,6 @@ export default function AddTechnology({ onAdded }: { onAdded: () => void }) {
     setValues((v) => ({ ...v, [field]: value, ...(field === "domain" ? { subdomain: "" } : {}) }));
   const close = () => { setOpen(false); setResult(null); setName(""); setValues(NONE); setError(null); };
 
-  if (!open) return (
-    <button type="button" onClick={() => setOpen(true)} className="rounded-full bg-navy px-3.5 py-1.5 text-sm text-white hover:bg-navy-strong">
-      + Add technology
-    </button>
-  );
 
   const p = checked?.data;
   const valuesSet = (r: Result) => chosen === 0 ? "" : r.values_set
@@ -126,7 +122,12 @@ export default function AddTechnology({ onAdded }: { onAdded: () => void }) {
   const subdomains = lists?.subdomains.filter((s) => s.domain_id === values.domain) ?? [];
 
   return (
-    <div className="w-[26rem] max-w-full rounded-card border border-line bg-white p-3 text-sm shadow-sm">
+    <>
+    <button type="button" onClick={() => setOpen(true)} className="rounded-full bg-navy px-3.5 py-1.5 text-sm text-white hover:bg-navy-strong">
+      + Add technology
+    </button>
+    <Dialog open={open} onClose={close} title="Add technology">
+    <div className="text-sm">
       <label className="block text-xs font-medium text-neutral-700" htmlFor="add-tech-name">Its name</label>
       <input id="add-tech-name" autoFocus value={name} onChange={(e) => { setName(e.target.value); setResult(null); }}
         placeholder="For example, Zero trust network access"
@@ -213,7 +214,9 @@ export default function AddTechnology({ onAdded }: { onAdded: () => void }) {
         </div>
       )}
       {error && <p role="alert" className="mt-2 text-failed">{error}</p>}
-      <button type="button" onClick={close} className="mt-2 block text-xs text-muted hover:text-ink">Close</button>
+      <button type="button" onClick={close} className="mt-3 block text-xs text-muted hover:text-ink">Close</button>
     </div>
+    </Dialog>
+    </>
   );
 }

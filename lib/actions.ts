@@ -7,7 +7,10 @@ import { refreshPipeline, type Offer } from "@/lib/pipeline";
 // The actions that start work, each written once: every button that starts
 // one shows its cost first (ConfirmAction) and refreshes the pipeline after.
 
-export type RunsPreview = { websites: number; data_sources: number; pages_per_source: number };
+export type RunsPreview = { websites: number; data_sources: number; pages_per_source: number; pages_in_all?: number };
+
+/** The pages a collection may read from its websites: each one's own budget, or the default. */
+export const websitePages = (v: RunsPreview) => v.pages_in_all ?? v.pages_per_source * v.websites;
 
 export const fetchRunsPreview = () => fetchJson<RunsPreview>("/api/runs/preview");
 
@@ -16,7 +19,8 @@ export const calls = (n: number) => `about ${plural(n, "model call")}`;
 
 export const collectQuestion = (v: RunsPreview | null) =>
   "Start a collection? " +
-  (v ? `Up to ${v.pages_per_source} pages from each of ${plural(v.websites, "website")}` +
+  (v ? (websitePages(v) === v.pages_per_source * v.websites ? `Up to ${v.pages_per_source} pages from each of ${plural(v.websites, "website")}`
+    : `Up to ${websitePages(v).toLocaleString()} pages across ${plural(v.websites, "website")} (some have their own page budget)`) +
     (v.data_sources ? `, plus the saved searches of ${plural(v.data_sources, "data source")}` : "") + ". " : "") +
   "Each new or changed page uses at least one model call.";
 

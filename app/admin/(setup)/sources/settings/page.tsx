@@ -9,10 +9,13 @@ import RadarSettings from "@/components/RadarSettings";
 import SavedNote from "@/components/SavedNote";
 import TechnicalDetailsSwitch from "@/components/TechnicalDetailsSwitch";
 import { configChanged, errorText, fetchJson, sendJson } from "@/lib/api";
+import { readingLine } from "@/lib/crawl";
 
 type CrawlSettings = {
   skip_url_patterns: string[];
   pages_per_source: number;
+  link_depth?: number;
+  links_per_level?: number | null; // null: Automatic
   page_part_chars: number;
   page_part_concurrency: number;
   lookback_days: number;
@@ -43,6 +46,8 @@ export default function SettingsPage() {
       const updated = await sendJson<CrawlSettings>("/api/settings/crawl", "PUT", {
         skip_url_patterns: form.skip_url_patterns,
         pages_per_source: Number(form.pages_per_source),
+        link_depth: Number(form.link_depth ?? 8),
+        links_per_level: form.links_per_level ? Number(form.links_per_level) : null,
         page_part_chars: Number(form.page_part_chars),
         page_part_concurrency: Number(form.page_part_concurrency),
         lookback_days: Number(form.lookback_days),
@@ -72,8 +77,12 @@ export default function SettingsPage() {
           <li>Links the crawler never follows: a link is skipped when its address contains any of these. Images,
             scripts and other files are always skipped.</li>
           <li>Page budget per source: the most pages one collection takes from each website, and from each data
-            source, shared across its saved searches. A website that reaches it is noted under Coverage on
-            Operations.</li>
+            source, shared across its saved searches. A source can have its own number (Sources › the source);
+            blank, it uses this one. A website that reaches it is noted under Coverage on Operations.</li>
+          <li>Levels of links to follow: a crawl reads the start pages, then the links on them, then the links on
+            those, this many levels deep. Links kept per level: at each level the AI keeps the most promising links.
+            Automatic shares the pages left across the levels left, so the page budget can always be reached; a fixed
+            number is used as given, and the form says when it can&apos;t reach the budget.</li>
           <li>With Technical details on: page part size and parts processed in parallel (a long page is split into
             parts and read in parallel, nothing is cut, each part is one model call), and the most tokens one judging
             run may use.</li>
@@ -109,6 +118,37 @@ export default function SettingsPage() {
                   everything collected is kept.
                 </span>
               </label>
+              <label className="block text-sm font-medium">
+                Levels of links to follow
+                <input type="number" min={1} max={20} className={field} value={form.link_depth ?? 8}
+                  onChange={number("link_depth")} />
+                <span className="mt-1 block text-xs font-normal text-neutral-500">
+                  The start pages, then the links on them, and so on (1–20).
+                </span>
+              </label>
+              <fieldset className="text-sm">
+                <legend className="font-medium">Links kept per level</legend>
+                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="links" checked={!form.links_per_level}
+                      onChange={() => setForm({ ...form, links_per_level: null })} /> Automatic
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="links" checked={!!form.links_per_level}
+                      onChange={() => setForm({ ...form, links_per_level: form.links_per_level || 15 })} /> A fixed number
+                  </label>
+                  {!!form.links_per_level && (
+                    <input type="number" min={1} max={200} aria-label="Links kept per level" className={`${field} mt-0 w-24`}
+                      value={form.links_per_level}
+                      onChange={(e) => e.target.value && setForm({ ...form, links_per_level: Number(e.target.value) })} />
+                  )}
+                </div>
+                {(() => {
+                  const line = readingLine(Number(form.pages_per_source) || 1, Number(form.link_depth ?? 8) || 1,
+                    form.links_per_level ? Number(form.links_per_level) : null);
+                  return <span className={`mt-1 block text-xs ${line.short ? "text-amber-800" : "text-neutral-500"}`}>{line.text}</span>;
+                })()}
+              </fieldset>
               <Hood>
               <label className="block text-sm font-medium">
                 Page part size (characters)

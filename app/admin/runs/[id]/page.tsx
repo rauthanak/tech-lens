@@ -37,6 +37,7 @@ type SourceStat = {
   incomplete?: boolean;
   incomplete_note?: string | null;
   skipped?: Skipped[]; // pages and links left out because they couldn't be read, by reason
+  budget?: number | null; // its own page budget, recorded since 1 Nov
 };
 
 type SubstageEvent = { stage: string; substage: string; at: string };
@@ -348,14 +349,14 @@ function SourcesTable({ run, runId, parent, running, access, horizons }: {
   // the same rule the API counts by (services/problems.didnt_finish): a website with links left unread
   const website = (s: SourceStat) => access[s.source_id] !== "query";
   const unfinished = run.sources.filter((s) => s.incomplete && website(s)).length;
-  const atBudget = run.sources.filter((s) => budget && s.pages_visited >= budget && s.incomplete && website(s)).length;
+  const atBudget = run.sources.filter((s) => { const b = s.budget ?? budget; return !!b && s.pages_visited >= b && s.incomplete && website(s); }).length;
   const others = (groups.get("failed")?.length ?? 0) + (groups.get("active")?.length ?? 0);
   const doneOpen = showDone ?? others === 0;
   return (
     <>
     {budget && (
       <p className="mt-1 text-[13px] text-muted">
-        A website is read up to {budget} pages, the most promising links first
+        A website is read up to {budget} pages unless it has its own page budget, the most promising links first
         {unfinished > 0 ? `: ${plural(unfinished, "website")} weren't read to the end (${atBudget.toLocaleString()} reached the page limit, the rest the link depth)` : ""}.
       </p>
     )}
@@ -388,8 +389,9 @@ function SourcesTable({ run, runId, parent, running, access, horizons }: {
               {!folded && sources.map((s) => {
                 const how = ACCESS_ICON[access[s.source_id] ?? "crawl"];
                 // the page budget is said once, above; a row says only what's particular to it
-                const note = budget && s.pages_visited >= budget && s.incomplete_note
-                  ? null : sourceNote(s, access[s.source_id] ?? "crawl", budget);
+                const own = s.budget ?? budget; // a source's own budget is said on its row
+                const note = own === budget && budget && s.pages_visited >= budget && s.incomplete_note
+                  ? null : sourceNote(s, access[s.source_id] ?? "crawl", own ?? undefined);
                 return (
                   <tr
                     key={s.source_id}
@@ -730,13 +732,16 @@ export default function RunDetailPage() {
             progress, waits for you, stopped and why, done), who moves it on, what it did, and links to its results.
             Collect, Organize and Classify run by themselves once you start a collection; Classify judges every
             technology with new pages, catalog technologies first. Assess, Write and Publish wait for you: on the latest collection their
-            buttons show the model-call cost and ask before anything starts.</li>
+            buttons show the model-call cost and ask before anything starts. Publish works in its step, as on the
+            Briefing. While an assessment runs, Write and Publish are greyed out with the reason. While collecting,
+            Collect counts the sources read out of all it will read.</li>
           <li>Assess, Write and Publish count what was done from this collection&apos;s start until the next
             collection&apos;s. On an older run they show what happened until then, with no buttons. Under Assess,
             &ldquo;Its pages were read in&rdquo; lists the assessment runs that used this collection&apos;s pages.</li>
           <li>Times are in the zone of the person who started the collection. The page updates by itself.</li>
           <li>Sources: those that couldn&apos;t finish first, then those being read, then the done ones (folded while
-            the others need attention). A website is read up to its page budget, most promising links first, so
+            the others need attention). A website is read up to its page budget (its own, or the default in Setup ›
+            Settings), the levels of links set there deep, most promising links first, so
             some links are not visited; a data source with results still to collect carries on at the next
             collection. Click a source for its pages. Technical details adds each source&apos;s address and horizon.</li>
           <li>Stop the collection asks first; it keeps what has been collected. The Technical details switch shows

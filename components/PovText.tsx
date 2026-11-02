@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 import FabricLabel from "@/components/FabricLabel";
 import { Derivation, Scores } from "@/components/PovScores";
 import PovValue, { type Fab } from "@/components/PovValue";
+import UseCaseSize from "@/components/UseCaseSize";
 import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
 import { ApiError, fetchJson } from "@/lib/api";
 import { renderCitations, renderRefs, SourceNumbers, sourceNumbers } from "@/lib/citations";
@@ -13,7 +13,7 @@ import { formatDate, formatDay, plural } from "@/lib/format";
 import { useHere, withFrom } from "@/lib/here";
 import { type Axis, HORIZON_TERM, LEGEND, PRIORITY_LEGEND, SCORE_NAMES } from "@/lib/scoring";
 import { heading } from "@/lib/theme";
-import { type Finance, FINANCE_SHOWN, figureText } from "@/lib/value";
+import { type Finance, type Size } from "@/lib/value";
 
 // A Point of View as the analysts' page and the leaders' Frontier both show
 // it, the same apart from the admins' controls (PovBody): the verdict, the four
@@ -53,19 +53,17 @@ export type PovFabric = {
   override: { reason: string | null; at: string; tz?: string | null } | null;
   override_moved?: boolean;
   measures: Record<string, PovMeasure>;
-  use_cases: (Refs & { title: string; levers: string[]; capital: string | null; capital_why?: string | null })[];
+  use_cases: (Refs & { title: string; levers: string[]; capital: string | null; capital_why?: string | null; size?: Size | null })[];
   suggested: string[]; // suggested by the model and accepted by a person
   no_use_case: { reason: string; evidence_needed: string } | null;
   path_step: string | null;
   path_step_order?: number | null; // the step's number, of path_steps
   path_steps?: number;
-  figures_from?: { name: string | null; order: number | null }; // the step from which finance figures are asked
   placement?: { how_soon: number | null; how_big: number | null; big_band: string | null }; // leaders': as the edition holds it
-  finance: Pick<Finance, "needed" | "contribution" | "payback" | "break_even" | "missing">
-    & { bottlenecks?: Finance["bottlenecks"]; next_step?: Finance["next_step"] };
+  finance: { bottlenecks?: Finance["bottlenecks"]; next_step?: Finance["next_step"] };
 };
 
-export type MeasureMeta = { _id: string; code: string; name: string; axis: string; weight?: number };
+export type MeasureMeta = { _id: string; code: string; name: string; axis: string; weight?: number; scope?: string };
 
 export type Pov = {
   scoring_run_id: string;
@@ -320,9 +318,6 @@ function Answers({ pov, admin }: { pov: Pov; admin: boolean }) {
   );
 }
 
-const FIGURES = [["contribution", "Contribution", " a year"], ["payback", "Payback", ""],
-  ["break_even", "Break-even revenue", " a year"]] as const;
-
 /** A capital reason's first sentence, without a leading "Light:" that repeats the level. */
 const firstSentence = (why: string, level: string) => {
   const s = why.replace(new RegExp(`^${level}\\s*[:—-]\\s*`, "i"), "").split(/(?<=\.)\s/)[0];
@@ -346,21 +341,18 @@ function FewRefs({ refs, sources }: { refs: number[] | undefined; sources: Sourc
 
 /** The use cases as a table: per fabric, each use case with its sources and
  *  the investment it needs (with why); then, for the fabric, how far Tata has
- *  got on its path to scale and whether it pays, from Tata's own figures. A
- *  note under it says what those two mean and where they're entered
- *  (`financeHref`: the admins' link to the finance card). How each one makes
- *  money is in a fold below. */
-function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId: string) => string }) {
+ *  got on its path to scale. A note under it says what that means and where
+ *  it's recorded. How each one makes money is in a fold below. */
+function ValueSummary({ pov }: { pov: Pov }) {
   const src = pov.sources ?? [];
   const fabrics = pov.fabrics ?? [];
   if (fabrics.length === 0) return null;
   const steps = fabrics[0].path_steps;
-  const from = fabrics[0].figures_from?.name ? fabrics[0].figures_from : { name: "Proof of concept", order: null };
   const cell = "px-3 py-2.5 align-top";
-  type Row = { title?: string; refs?: number[]; capital?: string | null; why?: string | null; note?: string };
+  type Row = { title?: string; refs?: number[]; capital?: string | null; why?: string | null; note?: string; size?: Size | null };
   const rowsOf = (f: PovFabric) => {
     const rows: Row[] = [
-      ...f.use_cases.map((uc) => ({ title: uc.title, refs: uc.refs, capital: uc.capital, why: uc.capital_why })),
+      ...f.use_cases.map((uc) => ({ title: uc.title, refs: uc.refs, capital: uc.capital, why: uc.capital_why, size: uc.size })),
       ...f.suggested.map((t) => ({ title: t, note: "Suggested by the model, not from the pages; accepted by a person." })),
     ];
     return rows.length ? rows : [{ note: f.no_use_case ? `No use case in the pages yet. ${f.no_use_case.reason}`
@@ -373,6 +365,7 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
   const investment = (r: Row) => r.capital ? <><span className="capitalize">{r.capital}</span>
     {r.why && <span className="block text-[12.5px] text-muted" title={r.why}>{firstSentence(r.why, r.capital)}</span>}</>
     : <span className="text-muted">—</span>;
+  const size = (r: Row) => r.title ? <UseCaseSize size={r.size} refs={<FewRefs refs={r.size?.refs} sources={src} />} /> : null;
 
   const howFar = (f: PovFabric) => {
     const b = f.finance.bottlenecks;
@@ -391,26 +384,6 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
       </>
     );
   };
-  const pays = (f: PovFabric) => {
-    const figures = FIGURES.filter(([k]) => f.finance[k]?.value != null);
-    if (figures.length > 0) return figures.map(([k, label, per]) => (
-      <span key={k} className="block">{label}: {figureText(f.finance[k]!.value!, f.finance[k]!.unit)}{per}</span>
-    ));
-    const missing = [...new Set(Object.values(f.finance.missing ?? {}).flat())];
-    return (
-      <>
-        <span className="text-muted">Not known yet</span>
-        <span className="block text-[12.5px] text-muted">
-          {f.finance.needed ? (missing.length ? `Needs Tata's ${missing.join(", ")}.` : "Needs Tata's figures.")
-            : `Asked for from ${from.name}`}
-        </span>
-        {financeHref && (
-          <Link href={financeHref(f.fabric_id)} className="text-[12.5px] text-link hover:underline print:hidden">Enter figures →</Link>
-        )}
-      </>
-    );
-  };
-
   return (
     <section>
       <h2 className={heading}>Use cases, fabric by fabric</h2>
@@ -428,12 +401,12 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
               {rows.map((r, i) => (
                 <div key={i} className="mt-2 break-inside-avoid leading-snug">
                   {caseCell(r, i, rows.length)}
+                  {r.title && <div className="mt-1 text-[13px]"><span className="text-muted">Ballpark size: </span>{size(r)}</div>}
                   {r.capital && <div className="mt-1 text-[13px]"><span className="text-muted">Investment needed: </span>{investment(r)}</div>}
                 </div>
               ))}
               <dl className="mt-3 space-y-1.5 border-t border-neutral-100 pt-2 text-[13px] leading-snug">
                 <div><dt className="text-muted">How far Tata has got</dt><dd>{howFar(f)}</dd></div>
-                {FINANCE_SHOWN && <div><dt className="text-muted">Does it pay?</dt><dd>{pays(f)}</dd></div>}
               </dl>
             </div>
           );
@@ -441,16 +414,14 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
       </div>
       <div className="mt-2 hidden overflow-x-auto rounded-card border border-line bg-white md:block print:hidden">
         <table className="w-full min-w-[760px] table-fixed text-sm">
-          {FINANCE_SHOWN
-            ? <colgroup><col className="w-[13%]" /><col className="w-[33%]" /><col className="w-[22%]" /><col className="w-[16%]" /><col className="w-[16%]" /></colgroup>
-            : <colgroup><col className="w-[14%]" /><col className="w-[40%]" /><col className="w-[24%]" /><col className="w-[22%]" /></colgroup>}
+          <colgroup><col className="w-[12%]" /><col className="w-[32%]" /><col className="w-[18%]" /><col className="w-[18%]" /><col className="w-[20%]" /></colgroup>
           <thead>
             <tr className="border-b border-neutral-200 text-left font-mono text-[11px] uppercase tracking-wider text-neutral-500">
               <th className="px-3 py-2 font-normal">Fabric</th>
               <th className="px-3 py-2 font-normal">Use case</th>
+              <th className="px-3 py-2 font-normal">Ballpark size</th>
               <th className="px-3 py-2 font-normal">Investment needed</th>
               <th className="px-3 py-2 font-normal">How far Tata has got</th>
-              {FINANCE_SHOWN && <th className="px-3 py-2 font-normal">Does it pay?</th>}
             </tr>
           </thead>
           {fabrics.map((f) => {
@@ -461,9 +432,9 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
                   <tr key={i} className={i > 0 ? "border-t border-neutral-50" : ""}>
                     {i === 0 && <td rowSpan={rows.length} className={cell}><FabricLabel id={f.fabric_id} name={f.fabric} /></td>}
                     <td className={`${cell} leading-snug`}>{caseCell(r, i, rows.length)}</td>
+                    <td className={`${cell} leading-snug`}>{size(r)}</td>
                     <td className={`${cell} leading-snug`}>{investment(r)}</td>
                     {i === 0 && <td rowSpan={rows.length} className={`${cell} leading-snug`}>{howFar(f)}</td>}
-                    {FINANCE_SHOWN && i === 0 && <td rowSpan={rows.length} className={`${cell} leading-snug`}>{pays(f)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -475,9 +446,10 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
         <li><b className="font-medium">How far Tata has got:</b> the step Tata has reached on its path to scale
           ({steps ? `${steps} steps, ` : ""}from first evaluating it to investing in it). Tata&apos;s team records it on the
           technology&apos;s page; the radar never sets it.</li>
-        {FINANCE_SHOWN && <li><b className="font-medium">Does it pay?</b> Contribution, payback and break-even, worked out from Tata&apos;s
-          own figures (margin, revenue, costs) entered under Finance on the technology&apos;s page. They&apos;re asked for
-          from {from.name}{from.order ? ` (step ${from.order})` : ""}; before that, nothing is missing.</li>}
+        <li><b className="font-medium">Ballpark size:</b> the size of the market the use case addresses, or the saving
+          it brings, from a page in its evidence; otherwise from a page that sizes a comparable market, named with why
+          it compares; otherwise &ldquo;No reliable data&rdquo;. Biggest first. The radar never sizes one from its
+          own knowledge.</li>
         <li>Numbers in brackets are sources; +n shows the rest.</li>
       </ul>
     </section>
@@ -489,15 +461,14 @@ function ValueSummary({ pov, financeHref }: { pov: Pov; financeHref?: (fabricId:
 export function PovHelp({ admin = false }: { admin?: boolean }) {
   return (
     <>
-      <li>First, the verdict and five answers: the priority in each fabric (P1 act now to P6 just watch, with the
+      <li>First, the verdict and five answers: the priority in each fabric (P1 act now to P6 no action yet, with the
         horizon, near to far), the maturity (TRL, 1 to 9), the commercial availability, the market size as a band
         (under $1B, $1–5B, $5–20B, $20–100B, over $100B) from the figure on a named page, and how solid the evidence is.
         A priority a person set says so, with their reason and the priority the scores give.</li>
       <li>About this technology, for readers new to it: what it is, where it came from and how it has evolved. It
         comes from general knowledge, not the pages reviewed, so it cites none.</li>
       <li>Then the recommendation, and the use cases in a table: per fabric, each use case with the investment it
-        needs and why, and how far Tata has got on its path to scale{FINANCE_SHOWN ? <>, and whether it pays, from
-        Tata&apos;s own figures</> : ""}. The note under the table says what {FINANCE_SHOWN ? "those mean" : "that means"} and
+        needs and why, and how far Tata has got on its path to scale. The note under the table says what that means and
         where it&apos;s recorded.</li>
       <li>The rest is folded, each fold saying what it holds: the summary, how each use case makes money, what&apos;s
         missing, the score detail in words, and the sources.</li>
@@ -521,8 +492,7 @@ export function PovHelp({ admin = false }: { admin?: boolean }) {
 }
 
 /** A Point of View's page below its header, the same for the admins and
- *  the leaders: `admin` adds only their links (each fabric's assessment, the
- *  finance card) and their notes (a citation to check, a rewrite to bring
+ *  the leaders: `admin` adds only their links (each fabric's assessment) and their notes (a citation to check, a rewrite to bring
  *  the text up to date). Printing opens every fold but the score detail,
  *  which prints, every measure open, when it's open. */
 export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?: boolean; afterAnswers?: ReactNode }) {
@@ -588,7 +558,7 @@ export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?
         </div>
       </div>
       <div className="mt-8 space-y-6">
-        <ValueSummary pov={pov} financeHref={admin ? (fabricId) => `${tab(fabricId)}#finance` : undefined} />
+        <ValueSummary pov={pov} />
 
         <div className="space-y-2 print:space-y-6">
           {(s.summary || s.maturity) && (

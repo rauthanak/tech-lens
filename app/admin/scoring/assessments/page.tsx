@@ -6,6 +6,7 @@ import BackendError from "@/components/BackendError";
 import ConfirmAction from "@/components/ConfirmAction";
 import OperationsTabs from "@/components/OperationsTabs";
 import PageHeader from "@/components/PageHeader";
+import Pager from "@/components/Pager";
 import StatusChip from "@/components/StatusChip";
 import { assessQuestion, assessSet, calls, runCalls } from "@/lib/actions";
 import { errorText, fetchJson } from "@/lib/api";
@@ -29,11 +30,14 @@ type ScoringRun = {
 /** Gate 1's "ready to assess": the evidence verdict decides it, and the page
  *  floor only for technologies not classified yet (services/radar_status). */
 type Ready = Offer;
+const RUNS_PAGE = 20;
 
 export default function AssessmentsPage() {
   const p = usePipeline();
   const label = useTechLabel();
   const [runs, setRuns] = useState<ScoringRun[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [start, setStart] = useState(0); // the list in pages of RUNS_PAGE, newest first
   const [error, setError] = useState<unknown>(null);
   const [ready, setReady] = useState<Ready | null>(null);
   const [readyError, setReadyError] = useState<string | null>(null);
@@ -42,8 +46,8 @@ export default function AssessmentsPage() {
   // the list, and what's ready, reload when the latest assessment run or a classification moves on
   const latest = p ? `${p.assess.scoring_run_id}:${p.assess.status}:${p.assess.techs_done}:${p.classify?.status}` : "";
   useEffect(() => {
-    fetchJson<{ scoring_runs: ScoringRun[] }>("/api/scoring/runs")
-      .then((d) => setRuns(d.scoring_runs))
+    fetchJson<{ scoring_runs: ScoringRun[]; total: number }>(`/api/scoring/runs?start=${start}&limit=${RUNS_PAGE}`)
+      .then((d) => { setRuns(d.scoring_runs); setTotal(d.total); })
       .catch(setError);
     fetchJson<{ gate1: GateItem[] }>("/api/gates")
       .then((g) => {
@@ -52,7 +56,7 @@ export default function AssessmentsPage() {
         setReadyError(null);
       })
       .catch((e) => setReadyError(errorText(e)));
-  }, [latest]);
+  }, [latest, start]);
   useEffect(() => {
     fetchJson<{ evidence_floor: number }>("/api/settings/radar").then((r) => setFloor(r.evidence_floor)).catch(() => {});
   }, []);
@@ -78,7 +82,8 @@ export default function AssessmentsPage() {
           <li>A run uses the scoring method as it stands when it starts; edits made during a run wait for the next
             one.</li>
           <li>Each row shows the run&apos;s status, some of its technologies, how many are done and the model calls
-            used. Click one for its results.</li>
+            used, newest first, 20 to a page. Click one for its results.</li>
+          <li>While a run goes, writing Points of View and publishing wait for it to finish.</li>
         </>} />
 
       {error != null && <BackendError error={error} />}
@@ -117,8 +122,9 @@ export default function AssessmentsPage() {
           onConfirm={() => assessSet("ready")} />
       </div>
 
+      {runs && <Pager className="mt-5" start={start} total={total} size={RUNS_PAGE} go={setStart} what="assessment runs" />}
       {runs && (
-        <div className="mt-5 divide-y divide-neutral-100 overflow-hidden rounded-card border border-line bg-white">
+        <div className="mt-3 divide-y divide-neutral-100 overflow-hidden rounded-card border border-line bg-white">
           {runs.map((r) => (
             <Link
               key={r._id}

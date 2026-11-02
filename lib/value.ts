@@ -1,39 +1,36 @@
 "use client";
 
 // Where the value lands (use cases and their lever chains), the path to
-// scale, the blockers and the finance screen, as the API gives them; and the fabrics' lists (levers, key metrics, blockers) and the
+// scale and the blockers, as the API gives them; and the fabrics' lists (levers, key metrics, blockers) and the
 // mechanisms' names, read from Setup.
 
 import { useEffect, useState } from "react";
 import { errorText, fetchJson } from "@/lib/api";
 import type { CitedPage } from "@/lib/classification";
-import { formatDay } from "@/lib/format";
 
 export type Lever = { lever_id: string; order?: number; mechanism_id: string; operating_change: string; metric: string;
   financial_effect: string; evidence_needed: string; next_step_when: string; pages: string[]; evidence?: "cited" | "needed" };
+/** A use case's ballpark size (28 Oct review): from a page, from a comparable market's page, or none with why;
+ *  `words` and `band` are worked out by the server. */
+export type Size = { basis: "evidence" | "comparable" | "none"; words: string; band?: string | null; page?: string;
+  comparable?: string | null; why_comparable?: string | null; reason?: string | null; evidence_needed?: string | null;
+  refs?: number[] };
 export type UseCase = { key: string; title: string; rank: number; cited: boolean; suggested: boolean; pages?: string[];
-  levers?: Lever[]; capital?: { direction: "light" | "moderate" | "heavy" | null; why: string }; why?: string };
+  levers?: Lever[]; capital?: { direction: "light" | "moderate" | "heavy" | null; why: string }; why?: string; size?: Size | null };
 export type PathStep = { _id: string; name: string; order: number; evidence_needed: string; decision: string; needs?: string[] };
-/** Where an input came from: "fabric default", or "set for this technology" with when. */
+/** Where a held note came from: "set for this technology" with when. */
 export type Source = { source: string; at?: string; tz?: string | null };
-export type Input = Source & { value: number };
-export type Figure = { value: number | null; label?: string; formula?: string; unit?: string; months?: number; volume?: number; note?: string };
 export type Need = { key: string; label: string; where: "assessment" | "finance" | "figures"; have: boolean };
 export type Brief = { _id: string; at: string; tz: string | null; reason: string | null };
+/** A technology in a fabric's path to scale, as the API gives it under `finance` (the stored name): the step
+ *  reached, the next step and what it still needs, the notes and price held for it, and the blockers picked. */
 export type Finance = {
   step: { id: string; name: string; order: number } | null;
   step_decision: Brief | null;
   next_step: { id: string; name: string; order: number; needs: Need[]; in_hand: boolean } | null;
-  needed: boolean;
-  asks: boolean;
   entered: Brief | null;
-  mechanism: Source & { value: "protect" | "earn" };
-  margin: Input | null; revenue: Input | null; displaced: Input | null;
-  upfront: Input | null; running: Input | null; volume: Input | null; price: Input | null;
-  loss_without: Input | null; loss_with: Input | null;
+  price: (Source & { value: number }) | null;
   notes: Record<"buyer" | "budget" | "exposed_contracts" | "cost_per_outcome", (Source & { value: string }) | null>;
-  contribution?: Figure; payback?: Figure; break_even?: Figure;
-  missing: Partial<Record<"contribution" | "payback" | "break_even", string[]>>;
   bottlenecks: { picked: string[]; other: string; decision: Brief } | null;
 };
 export type Pages = Record<string, CitedPage>;
@@ -42,41 +39,15 @@ export type SuggestedBlocker = { name: string; why: string; quote: string; page:
 
 export const CHAIN: [keyof Lever, string][] = [["operating_change", "Operating change"], ["metric", "Metric"],
   ["financial_effect", "Financial effect"], ["evidence_needed", "Evidence needed"], ["next_step_when", "Next step when"]];
-export const money = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-export const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
-
-/** A worked-out figure: money to the whole unit, or a number in its own unit ("2.35 years"). */
-export const figureText = (value: number, unit?: string) =>
-  unit ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}` : money(value);
-
-/** "fabric default", or "set for this technology on Oct 21". */
-export const sourceText = (s: Source) => (s.at ? `${s.source} on ${formatDay(s.at)}` : s.source);
-
-/** Finance (contribution, payback, break-even) is set aside until Tata has
- *  discussed it (21 Oct 2026): no screen asks for it or shows it. Its figures
- *  and code are kept; the API's finance.SHOWN is its pair. A rung's evidence
- *  (a named buyer, a price, a measured cost per outcome) is still entered,
- *  on the path to scale. */
-export const FINANCE_SHOWN = false;
-
-export const AMOUNTS = ["revenue", "volume", "price", "displaced", "upfront", "running"] as const;
-export const SHARES = ["margin", "loss_without", "loss_with"] as const;
 export const NOTES = ["buyer", "budget", "exposed_contracts", "cost_per_outcome"] as const;
 
-/** The finance choice as it's stored now (only what was set for this
- *  technology, not defaults), so a new choice changes one input and keeps the rest. */
+/** What's held for the next step now (the notes and price), so a new choice changes one and keeps the rest. */
 export function storedFinance(f: Finance): Record<string, string | number> {
-  const own = (x: { at?: string } | null) => Boolean(x?.at);
   const out: Record<string, string | number> = {};
-  for (const k of AMOUNTS) if (f[k] && own(f[k]) && !f[k]!.source.startsWith("volume")) out[k] = f[k]!.value;
-  for (const k of SHARES) if (f[k] && own(f[k])) out[k] = f[k]!.value;
   for (const k of NOTES) if (f.notes[k]) out[k] = f.notes[k]!.value;
-  if (own(f.mechanism)) out.mechanism = f.mechanism.value;
+  if (f.price) out.price = f.price.value;
   return out;
 }
-
-/** Whether any of the three figures is worked out yet. */
-export const hasFigures = (f: Finance) => [f.contribution, f.payback, f.break_even].some((x) => x?.value != null);
 
 export type FabricValue = { name: string; key_metrics?: string; bottlenecks?: string[];
   levers?: { lever_id: string; name: string; mechanism_id: string }[] };

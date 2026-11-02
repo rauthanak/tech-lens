@@ -91,6 +91,7 @@ export type Published = {
   fabrics: { id: string; name: string }[];
   stages: Stage[];
   cutpoints: { how_soon: [number, number]; how_big: [number, number] };
+  grid_from?: { how_soon: string[]; how_big: string[] } | null; // which measures make each axis (editions from 31 Oct on)
   near_band: number;
   assumptions: { statement: string; date: string | null }[];
   evidence: Evidence;
@@ -102,9 +103,10 @@ export type Frontier = Published | { edition: null };
 /** Growth reads up as how big the prize is; Defence as the Disruption threat.
  *  `name`: the choice as the reader sees it ("View by"). */
 export type Lens = "growth" | "defence";
-export const LENS_WORDS: Record<Lens, { name: string; up: string; more: string; less: string }> = {
-  growth: { name: "Size of prize (Growth)", up: "How big", more: "Bigger", less: "Smaller" },
-  defence: { name: "Threat to today's revenue (Defence)", up: "Disruption threat", more: "More threat", less: "Less threat" },
+export const LENS_WORDS: Record<Lens, { name: string; up: string; more: string; less: string; axis: string }> = {
+  growth: { name: "How big (Growth)", up: "How big", more: "Bigger", less: "Smaller", axis: "How big (impact potential)" },
+  defence: { name: "Threat to today's revenue (Defence)", up: "Disruption threat", more: "More threat", less: "Less threat",
+    axis: "Disruption threat" },
 };
 export const upOf = (item: Item, lens: Lens) => (lens === "defence" ? item.threat : item.how_big);
 

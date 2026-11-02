@@ -4,6 +4,7 @@ import { useState } from "react";
 import ActButton from "@/components/ActButton";
 import AddLink from "@/components/AddLink";
 import FindEvidence from "@/components/FindEvidence";
+import UseCaseSize from "@/components/UseCaseSize";
 import LeverChain from "@/components/LeverChain";
 import PageRefs, { FoldedRefs } from "@/components/PageRefs";
 import { decide, undo } from "@/lib/decisions";
@@ -76,6 +77,16 @@ export default function UseCases({ cases, suggested, none, failed, decisions, pa
             <span className="font-semibold">{uc.rank}. {uc.title}</span>
             {compact ? <FoldedRefs ids={uc.pages} pages={pages} /> : <PageRefs ids={uc.pages} pages={pages} />}
           </div>
+          {(uc.size || !readOnly) && (
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-2 text-[13px]">
+              <span className="text-muted">Ballpark size:</span>
+              <UseCaseSize size={uc.size} refs={<PageRefs ids={uc.size?.page ? [uc.size.page] : []} pages={pages} />} />
+              {(!uc.size || uc.size.basis === "none") && !readOnly && (
+                <FindEvidence gap={{ kind: "use_case", tech_id: techId, fabric_id: fabricId, key: uc.key }}
+                  label="Find its market size" onDone={onChanged} />
+              )}
+            </div>
+          )}
           <Capital capital={uc.capital} folded={compact} />
           <div className={compact ? "mt-1 space-y-1.5" : "mt-1.5 space-y-2"}>
             {[...(uc.levers ?? [])].sort((x, y) => (x.order ?? order(x.lever_id)) - (y.order ?? order(y.lever_id))).map((lv) => (

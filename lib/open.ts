@@ -1,5 +1,4 @@
 import { andList, plural } from "@/lib/format";
-import { FINANCE_SHOWN } from "@/lib/value";
 
 /** What's still open for a technology in one fabric (the summary's `open`,
  *  services/gates.fabric_open). */
@@ -12,7 +11,6 @@ export type FabricOpen = {
   waiting_for_tata: number;
   override_moved: boolean;
   suggested_use_cases: string[];
-  finance_missing: string[];
   step: string | null;
   next_step: { name: string; in_hand: boolean; missing: { label: string; where: string }[] } | null;
   blockers: boolean;
@@ -34,14 +32,13 @@ export function beforePublishing(o: FabricOpen): OpenItem[] {
     o.override_moved && { label: "Your priority override: the computed priority has moved since", anchor: "priority" },
     o.suggested_use_cases.length > 0 && {
       label: `${plural(o.suggested_use_cases.length, "suggested use case")} to accept or reject`, anchor: "use-cases" },
-    o.finance_missing.length > 0 && { label: `Finance: ${andList(o.finance_missing)}`, anchor: "finance" },
   ].filter((x): x is OpenItem => !!x);
 }
 
 /** How many things need a person before publishing: each measure, each
- *  suggested use case, the override and the finance card count one. */
+ *  suggested use case and the override count one. */
 export const toSettle = (o: FabricOpen) => o.unscored + o.waiting_for_tata + o.suggested_use_cases.length
-  + (o.override_moved ? 1 : 0) + (o.finance_missing.length > 0 ? 1 : 0);
+  + (o.override_moved ? 1 : 0);
 
 /** What the owner's record still lacks (how far Tata has got, the blockers,
  *  an owner) and what the next step needs: not needed to publish. */
@@ -49,8 +46,7 @@ export function notRecorded(o: FabricOpen): OpenItem[] {
   const next = o.next_step && !o.next_step.in_hand && o.next_step.missing.length > 0 ? o.next_step : null;
   return [
     !o.step && { label: "How far Tata has got", anchor: "path" },
-    next && { label: `For ${next.name}: ${andList(next.missing.map((m) => m.label))}`,
-      anchor: FINANCE_SHOWN && next.missing.every((m) => m.where === "finance") ? "finance" : "path" },
+    next && { label: `For ${next.name}: ${andList(next.missing.map((m) => m.label))}`, anchor: "path" },
     !o.blockers && { label: "What could stop it scaling", anchor: "blockers" },
     !o.owner && { label: "Owner and next action", anchor: "owner" },
   ].filter((x): x is OpenItem => !!x);

@@ -107,9 +107,9 @@ function Proposed({ imp, editable, here, onChange }: { imp: Import; editable: bo
   return (
     <div>
       <p className="text-[13px] text-neutral-700">
-        Each name below reads as a technology the radar already knows, in other words. Compare your row with what it
-        would join: accept to join it (the name in your file becomes an alias, and its pages are filed under it);
-        reject to keep it separate, as a new technology. Accept only when they are the same technology, not a narrower
+        Each name below reads as a technology the radar already knows, or as another row of your file, in other words.
+        Compare your row with what it would join: accept to join it (the name in your file becomes an alias, and its
+        pages are filed under it); reject to keep it separate, as a new technology. Accept only when they are the same technology, not a narrower
         or related one.
         {" "}{waiting.length ? `${waiting.length.toLocaleString()} still ${waitsOrWait(waiting.length)} for a decision.`
           : "Every proposed match has a decision."}
@@ -153,7 +153,13 @@ function Proposed({ imp, editable, here, onChange }: { imp: Import; editable: bo
                     <Description text={it.values.description} />
                   </td>
                   <td className="px-3 py-2.5 align-top">
-                    <TechLink item={{ ...it, target_name: t?.name ?? it.target_name }} here={here} />
+                    {it.same_as_row != null ? <>
+                      <span className="font-medium">{it.target_name}</span>
+                      <span className="text-[11px] text-muted"> · Row {it.same_as_row} of your file</span>
+                      <span className="mt-0.5 block text-[12.5px] text-neutral-700">
+                        Not in the radar yet: it comes in as a new technology, and accepting makes this row one of its names.
+                      </span>
+                    </> : <TechLink item={{ ...it, target_name: t?.name ?? it.target_name }} here={here} />}
                     {t && <span className="text-[11px] text-muted"> · {plural(t.page_count, "page")}</span>}
                     {tv && <span className="mt-0.5 block text-[12.5px] text-neutral-700">{tv.line}</span>}
                     {tv?.from && <span className="block text-[11px] text-muted">{tv.from}</span>}
@@ -163,7 +169,8 @@ function Proposed({ imp, editable, here, onChange }: { imp: Import; editable: bo
                       </span>
                     )}
                     <span className="mt-1 block text-[11px] text-muted">
-                      {it.why ? `Proposed at no cost: ${it.why}.` : "Proposed by the model."}
+                      {it.why ? `Proposed at no cost: ${it.why}.` : it.same_as_row != null
+                        ? "Proposed by the model: it reads both rows of your file as one technology." : "Proposed by the model."}
                     </span>
                   </td>
                   <td className="px-3 py-2.5 align-top"><DecisionChip decision={it.decision} /></td>

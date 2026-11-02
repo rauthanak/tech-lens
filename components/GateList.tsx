@@ -163,7 +163,7 @@ export default function TodoStrip() {
       case "write": return (
         <ConfirmAction secondary label={`Write ${them(i.count)}`} cost={calls(i.calls)} confirmLabel="Write" doneLabel="Started"
           question={`Write ${plural(i.count, "Point of View", "Points of View")}? About ${plural(i.calls, "model call")}.`}
-          onConfirm={() => writePovs(false)} />
+          disabled={blockedReason(p, "pov")} onConfirm={() => writePovs(false)} />
       );
     }
   };

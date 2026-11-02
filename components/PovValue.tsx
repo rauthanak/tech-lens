@@ -1,14 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import Bottlenecks from "@/components/Bottlenecks";
 import FabricLabel from "@/components/FabricLabel";
-import FinanceCard from "@/components/FinanceCard";
 import PathToScale from "@/components/PathToScale";
 import UseCases from "@/components/UseCases";
 import { errorText, fetchJson } from "@/lib/api";
-import { type Finance, FINANCE_SHOWN, hasFigures, type Pages, type PathStep, type UseCase, useValueLists } from "@/lib/value";
+import { type Finance, type Pages, type PathStep, type UseCase, useValueLists } from "@/lib/value";
 
 export type Fab = { fabric: string; finance: Finance; path: PathStep[]; cited_pages: Pages;
   use_case_decisions: Record<string, { _id: string; value: string }>;
@@ -18,9 +16,7 @@ export type Fab = { fabric: string; finance: Finance; path: PathStep[]; cited_pa
 const LABEL = "font-mono text-[10.5px] uppercase tracking-wider text-neutral-500";
 
 /** Where the value lands, fabric by fabric, read-only: the use cases with
- *  their lever chains, the execution bottlenecks, the path to scale and the
- *  finance figures; until figures exist, "for Tata to fill in", linking to
- *  the technology's finance card. */
+ *  their lever chains, the execution bottlenecks and the path to scale. */
 export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
   techId: string;
   fabricIds: string[];
@@ -64,19 +60,6 @@ export default function PovValue({ techId, fabricIds, admin = false, frozen }: {
                 <PathToScale readOnly steps={f.path} current={f.finance.step} next={f.finance.next_step} techId={techId} fabricId={fid} />
               </div>
             </div>
-            {FINANCE_SHOWN && <div className="mt-3">
-              <div className={`mb-1 ${LABEL}`}>Finance</div>
-              {hasFigures(f.finance) ? <FinanceCard readOnly f={f.finance} techId={techId} fabricId={fid} /> : (
-                <p className="rounded-lg bg-neutral-100 px-3 py-2 text-[13px] text-neutral-500 print:bg-transparent">
-                  Contribution margin, payback and break-even: for Tata to fill in.{" "}
-                  {admin && ( // the leaders' address can't open the admin's finance card
-                    <Link href={`/admin/technologies/${techId}?fabric=${encodeURIComponent(fid)}#finance`} className="text-link hover:underline print:hidden">
-                      Open its finance card →
-                    </Link>
-                  )}
-                </p>
-              )}
-            </div>}
           </div>
         );
       })}

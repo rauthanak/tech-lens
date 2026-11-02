@@ -9,7 +9,7 @@ import { usePipeline } from "@/lib/pipeline";
 type Radar = {
   wake_after_pages: number; default_time_zone: string; evidence_floor: number; classify_after_collection: boolean;
   classify_pages_cap: number; emerging_availability: string[];
-  find_evidence_results: number; find_evidence_daily_budget: number;
+  find_evidence_results: number;
 };
 
 const field = "mt-1 block w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -76,8 +76,7 @@ export default function RadarSettings() {
         {row("classify_pages_cap", "Pages read per technology when judging", "Pages with findings first, then the newest. How many pages it has in all is still counted.")}
         {row("evidence_floor", "Pages needed before a technology counts as ready", "Until its evidence is judged, a technology is ready to assess once it has at least this many pages.")}
         {row("wake_after_pages", "Flag a switched-off technology after this many new pages", "It shows on the Briefing, under Before assessing, once this many new pages about it arrive.")}
-        {row("find_evidence_results", "Find evidence: results per search", "How many web results one search reads.")}
-        {row("find_evidence_daily_budget", "Find evidence: searches per day", "Counted in the default time zone. A search past it is refused, with the reason.")}
+        {row("find_evidence_results", "Find evidence: results per place", "How many results each place gives by default; the person can choose another number in the panel. There's no daily cap: the panel shows the cost before each search.")}
         <label className="block text-sm font-medium">
           Default time zone
           <input className={field} value={form.default_time_zone} onChange={(e) => setForm({ ...form, default_time_zone: e.target.value })} />

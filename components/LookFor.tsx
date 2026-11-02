@@ -14,14 +14,18 @@ export default function LookFor({ techId, names, by, mentions, notATechnology, o
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const save = async () => {
     setError(null);
+    setSaving(true);
     try {
       await sendJson(`/api/technologies/${techId}/look-for`, "PUT", { names: text.split("\n").map((n) => n.trim()).filter(Boolean) });
       setEditing(false);
       onSaved();
     } catch (err) {
       setError(errorText(err));
+    } finally {
+      setSaving(false);
     }
   };
   return (
@@ -38,7 +42,7 @@ export default function LookFor({ techId, names, by, mentions, notATechnology, o
               className="mt-1 block w-full max-w-xl rounded border border-neutral-300 px-2 py-1.5 text-[13px]" />
           </label>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={save} className="rounded-full bg-navy px-3.5 py-1 text-[13px] text-white">Save</button>
+            <button type="button" onClick={save} disabled={saving} className="rounded-full bg-navy px-3.5 py-1 text-[13px] text-white disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
             <button type="button" onClick={() => setEditing(false)} className="text-[13px] text-muted">Cancel</button>
             <span className="text-xs text-muted">The next collection, or Link known names on Operations, looks for them.</span>
           </div>

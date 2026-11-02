@@ -12,18 +12,29 @@ export type Gap = {
   tech_id: string;
   fabric_id?: string | null;
   measure_id?: string | null;
+  key?: string; // a use case's key: look for its market size
   url?: string;
   target?: "technology" | "measure" | "use_case";
   urls?: string[]; // Add evidence: the links a person gave
   through?: "judge" | "pov"; // Add evidence: stop once its evidence is judged, or go on to the Point of View
   assess_anyway?: boolean;
+  places?: string[]; // Find evidence: where to look (the preview's places); none: the web
+  per_place?: number; // how many from each place
+  counts?: Record<string, number>; // a place's own number; the others take per_place
 };
+
+/** One place Find evidence can look: a data source (pages or counts), the radar's websites, or the web;
+ *  `why` says why it can't be searched now. */
+export type Place = { id: string; label: string; gives: string; kind: "search" | "counts" | "websites" | "web"; available: boolean;
+  why: string | null; chosen?: boolean };
+/** What one place gave a job: how many it found, or why not. */
+export type PlaceDone = { place: string; label: string; kind: Place["kind"] | null; found: number; why?: string };
 
 /** One address a job found: filed under the technology, already collected,
  *  set aside by a Can ignore rule (`rule`, and what it sets aside in
  *  `reason`), or not read (`reason` says why); "new" while it's being read. */
 export type JobResult = { url: string; title: string | null; status: "new" | "already" | "filed" | "set_aside" | "failed";
-  rule?: string; reason?: string | null };
+  rule?: string; reason?: string | null; place?: string | null };
 
 export type Job = {
   _id: string;
@@ -37,10 +48,13 @@ export type Job = {
   summary?: string;
   error?: string;
   results: JobResult[];
+  places_done?: PlaceDone[];
+  rerun?: { kind: string; outcome: string };
 };
 
-export type Preview = { configured: boolean; query: string | null; searches: number; page_reads: number; reruns: number;
-  budget: { used: number; limit: number }; why_not: string | null };
+export type Preview = { configured: boolean; query: string | null; names: string[]; places: Place[]; per_place: number;
+  counts: Record<string, number>;
+  cost: { pages: number; searches: number; calls: number }; searches: number; page_reads: number; reruns: number; why_not: string | null };
 
 const STAGES: Record<string, string> = { reading: "Reading the pages found…", "re-running": "Running the gap's call again…",
   assessing: "Assessing it…", writing: "Writing its Point of View…" };
@@ -100,12 +114,13 @@ export function usePastJobs(techId: string): { jobs: Job[] | null; error: string
 }
 
 /** Whether a past job was for this gap: on the technology itself, every one
- *  of its jobs; on a measure or a fabric's use cases, those for it alone
- *  (a pasted link included). */
+ *  of its jobs; on a measure, a fabric's use cases or one use case's size,
+ *  those for it alone (a pasted link included). */
 export function forGap(job: Job, gap: Omit<Gap, "url">): boolean {
   if (gap.kind === "technology") return true;
   const g = job.gap;
   if ((g.fabric_id ?? null) !== (gap.fabric_id ?? null)) return false;
   if (gap.kind === "measure") return g.measure_id === gap.measure_id;
+  if ((g.key ?? null) !== (gap.key ?? null)) return false; // one use case's size search isn't another's
   return !g.measure_id && (g.kind === "use_case" || g.target === "use_case");
 }

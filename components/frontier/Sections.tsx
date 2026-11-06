@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import {
-  biggestMoves, type Held, type Item, LEADER_STATES, type Lens, moveReason, moveText, povHref, type Published, type TooEarly, upOf,
+  biggestMoves, type Held, type Item, LEADER_STATES, leaderText, type Lens, moveReason, moveText, povHref, type Published, type TooEarly, upOf,
 } from "@/components/frontier/items";
 import { VERDICT_STYLE, VERDICT_WORDS } from "@/lib/classification";
 import { formatAt, formatDate, plural } from "@/lib/format";
@@ -240,7 +240,15 @@ export function MovedSince({ moved, previous, from, withFabric }: {
 }
 
 /** How far Tata's commitment has got, counted over the placements shown. */
-export function Committed({ items }: { items: Item[] }) {
+/** How many dots are at each commitment, then each one with an owner: who
+ *  owns it, what's next and by when, and what's committed, furthest along
+ *  first. With one fabric chosen it is that business unit's list; with all,
+ *  it's grouped by fabric. */
+export function Committed({ items, from, withFabric }: { items: Item[]; from: string; withFabric: boolean }) {
+  const rank = (i: Item) => LEADER_STATES.findIndex((s) => s.id === i.leader.state);
+  const owned = items.filter((i) => i.leader.state !== "undefined")
+    .sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
+  const fabrics = withFabric ? [...new Set(owned.map((i) => i.fabric))].sort() : [null];
   return (
     <section className={card} aria-label="What Tata has committed">
       <h2 className="font-semibold">What Tata has committed</h2>
@@ -258,6 +266,27 @@ export function Committed({ items }: { items: Item[] }) {
           </li>
         ))}
       </ul>
+      {owned.length === 0 && items.length > 0 && (
+        <p className="mt-3 border-t border-neutral-100 pt-2 text-[12.5px] text-muted">
+          No technology shown here has an owner recorded yet.
+        </p>
+      )}
+      {owned.length > 0 && fabrics.map((f) => (
+        <div key={f ?? "one"} className="mt-3 border-t border-neutral-100 pt-2">
+          {f && <h3 className="text-[12.5px] font-semibold text-ink">{f}</h3>}
+          <ul className="mt-1 space-y-1.5 text-sm">
+            {owned.filter((i) => !f || i.fabric === f).map((i) => (
+              <li key={`${i.tech_id}:${i.fabric_id}`} className="break-inside-avoid">
+                <span className={`mr-1.5 rounded px-1.5 py-px text-[11px] ${LEADER_STATES[rank(i)].chip}`}>{LEADER_STATES[rank(i)].name}</span>
+                <Name item={i} from={from} withFabric={false} />
+                {leaderText(i.leader).split(". Committed: ").map((line, n) => (
+                  <span key={n} className="block text-[12.5px] leading-snug text-muted">{n ? `Committed: ${line}` : line}</span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }

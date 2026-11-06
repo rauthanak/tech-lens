@@ -97,7 +97,7 @@ export default function EditionPackPage() {
       </div>
       <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-3 print:grid-cols-1">
         <MovedSince moved={placed.filter((i) => i.moved)} previous={e.previous} from="/frontier" withFabric />
-        <Committed items={placed} />
+        <Committed items={placed} from="/frontier" withFabric />
         <Assumptions items={data.assumptions} />
       </div>
 

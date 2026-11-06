@@ -205,7 +205,7 @@ function FrontierView() {
             <ActNow items={placed.filter((i) => i.priority === "P1")} lens={lens} from={here} withFabric={withFabric} />
             <OnTheFrontier on={onList} near={nearList} lens={lens} from={here} withFabric={withFabric} />
             <MovedSince moved={placed.filter((i) => i.moved)} previous={data.edition.previous} from={here} withFabric={withFabric} />
-            <Committed items={placed} />
+            <Committed items={placed} from={here} withFabric={withFabric} />
           </div>
 
           <NotPlaced held={held} from={here} withFabric={withFabric} lens={lens} />

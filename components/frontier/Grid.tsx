@@ -45,15 +45,16 @@ const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 &
 const inside = (a: Box, b: Box) => a.x0 >= b.x0 && a.x1 <= b.x1 && a.y0 >= b.y0 && a.y1 <= b.y1;
 
 type Dot = { item: Item; i: number; cx: number; cy: number };
-type Row = { text: string; priority: string | null; ring: boolean; more?: boolean };
-type Block = { key: string; x0: number; y0: number; swatch: boolean; rows: Row[]; leader: number[] | null };
+type Row = { text: string; more?: boolean };
+type Block = { key: string; x0: number; y0: number; rows: Row[]; leader: number[] | null };
 
 const LINE = 14; // a name's line height
 
 /** Names for the dots in view, point by point, most urgent first. Dots
  *  sharing a point are named together: one line per technology (its fabrics
- *  joined), each with its priority's colour, so which is which needs no
- *  pointing. A block takes the first free spot beside its dots (right, left,
+ *  joined), as plain text, so nothing beside a name looks like another dot.
+ *  Dots on one point share their scores and so their priority; one a person
+ *  set says so in words: "(P1, set by a person)". A block takes the first free spot beside its dots (right, left,
  *  above, below) that crosses no dot, name or corner label, else one a
  *  little further out, joined to them by a thin line; with none, it tries
  *  one name and "+N more"; with no room at all it's left out, and the dots
@@ -78,7 +79,8 @@ function placeNames(dots: Dot[], obstacles: Box[], plot: Box, withFabric: boolea
     }
     const text = (l: (typeof lines)[number]) => {
       const name = l.name.length > MAX_NAME ? `${l.name.slice(0, MAX_NAME - 1).trimEnd()}…` : l.name;
-      return withFabric ? `${name} · ${l.fabrics.join(", ")}` : name;
+      const by = l.ring && lines.length > 1 ? ` (${l.priority}, set by a person)` : "";
+      return `${withFabric ? `${name} · ${l.fabrics.join(", ")}` : name}${by}`;
     };
     const edge = group.map((d) => R + (d.item.override ? 3.5 : 0));
     const bx0 = Math.min(...group.map((d, j) => d.cx - edge[j])), bx1 = Math.max(...group.map((d, j) => d.cx + edge[j]));
@@ -86,11 +88,10 @@ function placeNames(dots: Dot[], obstacles: Box[], plot: Box, withFabric: boolea
     for (const m of lines.length > 1 ? [lines.length, 1] : [1]) {
       const more = lines.slice(m).reduce((n, l) => n + l.count, 0);
       const rows: Row[] = [
-        ...lines.slice(0, m).map((l) => ({ text: text(l), priority: l.priority, ring: l.ring })),
-        ...(more ? [{ text: `+${more} more here`, priority: null, ring: false, more: true }] : []),
+        ...lines.slice(0, m).map((l) => ({ text: text(l) })),
+        ...(more ? [{ text: `+${more} more here`, more: true }] : []),
       ];
-      const swatch = rows.length > 1;
-      const w = Math.max(...rows.map((r) => r.text.length * CHAR)) + (swatch ? 10 : 0), h = rows.length * LINE;
+      const w = Math.max(...rows.map((r) => r.text.length * CHAR)), h = rows.length * LINE;
       const midX = (bx0 + bx1) / 2, midY = (by0 + by1) / 2;
       // beside the dots first (d = 0), then a step further out each time
       const spot = [0, 1, 2, 3, 4].flatMap((n) => {
@@ -113,7 +114,7 @@ function placeNames(dots: Dot[], obstacles: Box[], plot: Box, withFabric: boolea
       const from = [near((spot.x0 + spot.x1) / 2, bx0, bx1), near((spot.y0 + spot.y1) / 2, by0, by1)];
       const to = [near(from[0], spot.x0, spot.x1), near(from[1], spot.y0, spot.y1)];
       const leader = Math.hypot(to[0] - from[0], to[1] - from[1]) > 6 ? [...from, ...to] : null;
-      blocks.push({ key, x0: spot.x0, y0: spot.y0, swatch, rows, leader });
+      blocks.push({ key, x0: spot.x0, y0: spot.y0, rows, leader });
       named += lines.slice(0, m).reduce((n, l) => n + l.count, 0);
       break;
     }
@@ -442,12 +443,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                     const y = b.y0 + LINE * (j + 0.5);
                     return (
                       <g key={`${b.key}:${j}`}>
-                        {b.swatch && !row.more && (
-                          <circle cx={b.x0 + 3.5} cy={y} r={3.5} style={{ fill: priorityFill(row.priority) }}
-                            stroke={row.ring ? "var(--color-azure)" : isPale(row.priority) ? "#3f5f99" : "none"}
-                            strokeWidth={row.ring ? 1.5 : 0.75} />
-                        )}
-                        <text x={b.x0 + (b.swatch ? 10 : 0)} y={y} dominantBaseline="central"
+                        <text x={b.x0} y={y} dominantBaseline="central"
                           fill={row.more ? "var(--color-muted)" : "var(--color-ink)"} stroke="#fff" strokeWidth={3}
                           strokeLinejoin="round" paintOrder="stroke">{row.text}</text>
                       </g>

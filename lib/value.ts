@@ -14,8 +14,9 @@ export type Lever = { lever_id: string; order?: number; mechanism_id: string; op
  *  `words` and `band` are worked out by the server. */
 export type Size = { basis: "evidence" | "comparable" | "none"; words: string; band?: string | null; page?: string;
   comparable?: string | null; why_comparable?: string | null; reason?: string | null; evidence_needed?: string | null;
+  quote?: string | null; // the page's own words (from 5 Nov; checked to be on the page)
   refs?: number[] };
-export type UseCase = { key: string; title: string; rank: number; cited: boolean; suggested: boolean; pages?: string[];
+export type UseCase = { key: string; title: string; industry?: string | null; rank: number; cited: boolean; suggested: boolean; pages?: string[];
   levers?: Lever[]; capital?: { direction: "light" | "moderate" | "heavy" | null; why: string }; why?: string; size?: Size | null };
 export type PathStep = { _id: string; name: string; order: number; evidence_needed: string; decision: string; needs?: string[] };
 /** Where a held note came from: "set for this technology" with when. */

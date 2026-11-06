@@ -52,6 +52,7 @@ const FIELD_LABELS: Record<string, string> = {
   evidence_floor: "Pages needed before a technology counts as ready",
   wake_after_pages: "Flag a switched-off technology after this many new pages",
   find_evidence_results: "Find evidence: results per place",
+  frontier_too_early: "Show \"too early to place\" on the leaders' view",
   default_time_zone: "Default time zone", emerging_availability: "Values that count as emerging",
   // scoring method
   max_dossier_tokens: "Most evidence sent per technology", timeline_cutpoints: "How soon: cut-points",

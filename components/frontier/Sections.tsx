@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import {
-  biggestMoves, type Held, type Item, LEADER_STATES, type Lens, moveReason, moveText, povHref, type Published, upOf,
+  biggestMoves, type Held, type Item, LEADER_STATES, type Lens, moveReason, moveText, povHref, type Published, type TooEarly, upOf,
 } from "@/components/frontier/items";
 import { VERDICT_STYLE, VERDICT_WORDS } from "@/lib/classification";
 import { formatAt, formatDate, plural } from "@/lib/format";
@@ -78,6 +78,47 @@ export function NotPlaced({ held, from, withFabric, lens }: { held: Held[]; from
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+/** Tata's catalog technologies the radar has looked at but can't place yet,
+ *  by why: the Wait corner's "too early to place" line jumps here. Nothing
+ *  when there are none (editions before 5 Nov, or the setting off). */
+export function TooEarlyList({ items }: { items: TooEarly[] }) {
+  if (items.length === 0) return null;
+  const groups = ([["thin", "Evidence too thin so far"], ["not_credible", "Evidence not credible yet"]] as const)
+    .map(([verdict, title]) => ({ title, techs: items.filter((i) => i.verdict === verdict) }))
+    .filter((g) => g.techs.length > 0);
+  const open = items.length <= 12; // a short list shows at once; a long one opens by why
+  return (
+    <section id="too-early" className="mt-10 scroll-mt-6">
+      <h2 className="text-lg font-semibold">
+        Too early to place <span className="font-normal text-muted">· {items.length.toLocaleString()}</span>
+      </h2>
+      <p className="mt-1 max-w-4xl text-sm text-neutral-600">
+        From Tata&apos;s catalog. The radar has looked, but the evidence so far is too thin or not credible to say how
+        soon they arrive or how big the prize is. More evidence can move them onto the grid.
+      </p>
+      <div className="mt-3 space-y-2">
+        {groups.map((g) => (
+          <details key={g.title} open={open} className="group rounded-card border border-line bg-white">
+            <summary className="flex cursor-pointer list-none items-baseline gap-2 px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
+              <span aria-hidden className="inline-block text-[10px] text-muted transition-transform group-open:rotate-90">▶</span>
+              <span className="text-ink">
+                {g.title} <span className="whitespace-nowrap text-muted">· {plural(g.techs.length, "technology", "technologies")}</span>
+              </span>
+            </summary>
+            <ul className="gap-8 px-4 pb-3 pl-9 text-sm sm:columns-2">
+              {g.techs.map((t) => (
+                <li key={t.tech_id} className="break-inside-avoid py-0.5">
+                  {t.name}{t.reason && <span className="text-muted"> · {t.reason}</span>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ))}
+      </div>
     </section>
   );
 }

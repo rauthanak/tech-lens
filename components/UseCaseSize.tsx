@@ -13,9 +13,15 @@ export default function UseCaseSize({ size, refs }: { size?: Size | null; refs?:
   return (
     <span>
       {size.words} {refs}
+      {size.quote && <span className="block text-[12.5px] text-muted">&ldquo;{size.quote}&rdquo;</span>}
       {size.basis === "comparable" && (
         <span className="block text-[12.5px] text-muted">Comparable: {size.comparable}. {size.why_comparable}</span>
       )}
     </span>
   );
+}
+
+/** The industry a use case serves, as a small label beside its title. */
+export function Industry({ name }: { name: string }) {
+  return <span className="whitespace-nowrap rounded border border-line px-1 text-[11px] font-normal text-muted">{name}</span>;
 }

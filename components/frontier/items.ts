@@ -64,6 +64,9 @@ export type Item = {
 
 export type Held = Item & { reason: string };
 
+/** A catalog technology the radar has looked at but can't place yet (editions from 5 Nov on). */
+export type TooEarly = { tech_id: string; name: string; verdict: "thin" | "not_credible"; reason: string | null };
+
 /** A published edition, without its placements. */
 export type Edition = {
   _id: string;
@@ -73,7 +76,7 @@ export type Edition = {
   tz: string | null;
   by?: { name: string } | null; // who published it (none before sign-in)
   previous: { _id: string; name: string | null; label: string; published_at: string; tz: string | null } | null;
-  counts: { placements: number; held: number; povs: number; moved: number; technologies: number };
+  counts: { placements: number; held: number; too_early?: number; povs: number; moved: number; technologies: number };
 };
 
 export type Evidence = {
@@ -88,6 +91,7 @@ export type Published = {
   edition: Edition;
   placed: Item[];
   held: Held[];
+  too_early?: TooEarly[]; // none before 5 Nov, or with the setting off
   fabrics: { id: string; name: string }[];
   stages: Stage[];
   cutpoints: { how_soon: [number, number]; how_big: [number, number] };

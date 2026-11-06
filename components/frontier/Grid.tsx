@@ -131,7 +131,7 @@ const score = (n: number | null) => (n == null ? "no score" : `${formatScore(n)}
  *  hatched band for those near it. Wheel or + − zoom, drag moves, ⌂ shows it
  *  all; clicking a dot picks it (`onPick`: what placed it), else opens its
  *  Point of View. */
-export default function Grid({ items, cutpoints, withFabric, from, lens, frontier, since, picked, onPick }: {
+export default function Grid({ items, cutpoints, withFabric, from, lens, frontier, since, picked, onPick, tooEarly = 0 }: {
   items: Item[];
   cutpoints: Cutpoints;
   withFabric: boolean;
@@ -141,6 +141,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
   since?: string; // the edition before, for "moved since"
   picked?: Item | null;
   onPick?: (item: Item) => void;
+  tooEarly?: number; // catalog technologies too early to place: one line in the Wait corner, a link to their list
 }) {
   const words = LENS_WORDS[lens];
   const router = useRouter();
@@ -248,16 +249,17 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
   // (its dots, zoom, size or what's up), not on every hover
   const { quadrants, dots, blocks, named } = useMemo(() => {
     const quadrants = QUADRANTS.map((q0) => {
-      const q = { ...q0, sub: `${q0.top ? "now" : "later"} · ${(q0.right ? words.more : words.less).toLowerCase()}` };
+      const q = { ...q0, sub: `${q0.top ? "now" : "later"} · ${(q0.right ? words.more : words.less).toLowerCase()}`,
+        early: q0.name === "Wait" && tooEarly > 0 ? `+${tooEarly.toLocaleString()} too early to place` : "" };
       const [x0, x1] = q.right ? [sx(midBig), sx(D1)] : [sx(D0), sx(midBig)];
       const [y0, y1] = q.top ? [sy(D1), sy(midSoon)] : [sy(midSoon), sy(D0)];
       const seen = { x0: Math.max(plot.x0, x0), x1: Math.min(plot.x1, x1), y0: Math.max(plot.y0, y0), y1: Math.min(plot.y1, y1) };
       // the name goes in the quadrant's outer corner, while enough of it shows
       const shown = seen.x1 - seen.x0 >= 96 && seen.y1 - seen.y0 >= 44;
       const tx = q.right ? seen.x1 - 10 : seen.x0 + 10;
-      const ty = q.top ? seen.y0 + 19 : seen.y1 - 22;
-      const w = Math.max(q.name.length * 9, q.sub.length * 6.2);
-      const label: Box = { x0: q.right ? tx - w : tx, x1: q.right ? tx : tx + w, y0: ty - 14, y1: ty + 18 };
+      const ty = q.top ? seen.y0 + 19 : seen.y1 - 22 - (q.early ? 14 : 0); // a third line lifts a bottom corner's name
+      const w = Math.max(q.name.length * 9, q.sub.length * 6.2, q.early.length * 6.2);
+      const label: Box = { x0: q.right ? tx - w : tx, x1: q.right ? tx : tx + w, y0: ty - 14, y1: ty + (q.early ? 32 : 18) };
       return { ...q, x0, x1, y0, y1, shown, tx, ty, label };
     });
 
@@ -271,7 +273,7 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
     ];
     const { blocks, named } = width > 0 ? placeNames(dots, obstacles, plot, withFabric, lens) : { blocks: [], named: 0 };
     return { quadrants, dots, blocks, named };
-  }, [items, offsets, view, width, lens, withFabric, cutpoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [items, offsets, view, width, lens, withFabric, cutpoints, tooEarly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the frontier, smaller to bigger: a stepped line through its dots, and the band
   // between it and the same line moved back by the band's width on both axes
@@ -385,6 +387,13 @@ export default function Grid({ items, cutpoints, withFabric, from, lens, frontie
                       fillOpacity={0.7}>{q.name.toUpperCase()}</tspan>
                     <tspan x={q.tx} dy={14} fontSize={10.5} fill="var(--color-muted)">{q.sub}</tspan>
                   </text>
+                ))}
+                {quadrants.filter((q) => q.shown && q.early).map((q) => (
+                  <a key={`${q.name}-early`} href="#too-early" className="group"
+                    aria-label={`${tooEarly.toLocaleString()} catalog technologies too early to place: jump to the list`}>
+                    <text x={q.tx} y={q.ty + 28} textAnchor={q.right ? "end" : "start"} fontSize={10.5}
+                      fill="var(--color-link)" className="group-hover:underline">{q.early}</text>
+                  </a>
                 ))}
 
                 {/* the frontier and the band near it, under the dots */}

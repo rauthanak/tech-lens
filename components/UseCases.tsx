@@ -4,7 +4,7 @@ import { useState } from "react";
 import ActButton from "@/components/ActButton";
 import AddLink from "@/components/AddLink";
 import FindEvidence from "@/components/FindEvidence";
-import UseCaseSize from "@/components/UseCaseSize";
+import UseCaseSize, { Industry } from "@/components/UseCaseSize";
 import LeverChain from "@/components/LeverChain";
 import PageRefs, { FoldedRefs } from "@/components/PageRefs";
 import { decide, undo } from "@/lib/decisions";
@@ -75,6 +75,7 @@ export default function UseCases({ cases, suggested, none, failed, decisions, pa
         <div key={uc.key}>
           <div className="flex break-after-avoid flex-wrap items-baseline gap-2">
             <span className="font-semibold">{uc.rank}. {uc.title}</span>
+            {uc.industry && <Industry name={uc.industry} />}
             {compact ? <FoldedRefs ids={uc.pages} pages={pages} /> : <PageRefs ids={uc.pages} pages={pages} />}
           </div>
           {(uc.size || !readOnly) && (

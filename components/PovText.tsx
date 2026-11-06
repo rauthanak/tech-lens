@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 import FabricLabel from "@/components/FabricLabel";
 import { Derivation, Scores } from "@/components/PovScores";
 import PovValue, { type Fab } from "@/components/PovValue";
-import UseCaseSize from "@/components/UseCaseSize";
+import UseCaseSize, { Industry } from "@/components/UseCaseSize";
 import WatchMetrics, { type WatchMetric } from "@/components/WatchMetrics";
 import { ApiError, fetchJson } from "@/lib/api";
 import { renderCitations, renderRefs, SourceNumbers, sourceNumbers } from "@/lib/citations";
@@ -53,7 +54,7 @@ export type PovFabric = {
   override: { reason: string | null; at: string; tz?: string | null } | null;
   override_moved?: boolean;
   measures: Record<string, PovMeasure>;
-  use_cases: (Refs & { title: string; levers: string[]; capital: string | null; capital_why?: string | null; size?: Size | null })[];
+  use_cases: (Refs & { title: string; industry?: string | null; levers: string[]; capital: string | null; capital_why?: string | null; size?: Size | null })[];
   suggested: string[]; // suggested by the model and accepted by a person
   no_use_case: { reason: string; evidence_needed: string } | null;
   path_step: string | null;
@@ -82,6 +83,12 @@ export type Pov = {
     placement_rationale?: string | null;
     evidence_gaps?: string | { fabric: string; missing: string[] }[] | null;
     recommendation?: string | null;
+    // the short lists from the pages (5 Nov on; absent in older Points of View)
+    customer_need?: string[];
+    alternatives?: string[];
+    players?: string[];
+    risks?: string[];
+    whats_new?: string[];
     // written before version 4 of the skill, retelling the scores' measures
     maturity?: string | null;
     market_view?: string | null;
@@ -101,14 +108,19 @@ export type Pov = {
   /** The market figure the assessment rests on, as a band (null band: no page gave one;
    *  null: assessed before figures were asked) */
   market_size?: (Refs & { band: string | null; amount_usd_bn?: number; year?: number | string | null;
-    scope?: string | null; url?: string }) | null;
+    scope?: string | null; url?: string; quote?: string | null }) | null;
+  /** The growth rate a page states, in its own words ({cagr_pct: null}: none did; null: assessed before rates were asked) */
+  growth_rate?: (Refs & { cagr_pct: number | null; from_year?: number | null; to_year?: number | null; quote?: string }) | null;
   measures?: MeasureMeta[]; // the run's own, for their names
   watch_metrics?: WatchMetric[];
   latest_assessment?: { scoring_run_id: string; fabric_ids: string[]; assessed_at: string } | null; // what PovValue shows
   value?: Fab[]; // an edition's frozen copy of where the value lands (the leaders' view); else PovValue fetches it
 };
 
-const AXIS_LABELS = SCORE_NAMES; // the three scores (a measure scored alongside them isn't one)
+const AXIS_LABELS = SCORE_NAMES;
+/** The short lists in "The market around it", in Tata's order. */
+const MARKET = [["customer_need", "Why customers want it"], ["alternatives", "Alternatives"], ["players", "Who's building it"],
+  ["whats_new", "What's new"]] as const; // the three scores (a measure scored alongside them isn't one)
 
 
 /** A run's Point of View of a technology, or null when none is written yet. */
@@ -131,6 +143,30 @@ export function Section({ title, covers, text, sources = [] }: {
       </div>
       <p className="mt-1.5 text-[15px] leading-relaxed text-neutral-800">
         {renderCitations(text, sources)}</p>
+    </section>
+  );
+}
+
+/** One of the short lists from the pages (5 Nov on): nothing for a Point of
+ *  View written before them; when the pages don't cover it, one line saying
+ *  so (the admin's page adds Find evidence), so it never looks forgotten. */
+export function Bullets({ title, items, sources = [], findHref }: {
+  title: string; items?: string[]; sources?: Source[]; findHref?: string;
+}) {
+  if (items === undefined) return null;
+  return (
+    <section>
+      <h2 className={`${heading} break-after-avoid`}>{title}</h2>
+      {items.length === 0 ? (
+        <p className="mt-1 text-sm text-muted">
+          The pages reviewed don&apos;t cover this yet.
+          {findHref && <> <Link href={findHref} className="text-link hover:underline print:hidden">Find evidence</Link></>}
+        </p>
+      ) : (
+        <ul className="mt-1.5 list-disc space-y-1 pl-5 text-[15px] leading-relaxed text-neutral-800">
+          {items.map((b) => <li key={b}>{renderCitations(b, sources)}</li>)}
+        </ul>
+      )}
     </section>
   );
 }
@@ -253,6 +289,7 @@ function Answers({ pov, admin }: { pov: Pov; admin: boolean }) {
   const src = pov.sources ?? [];
   const { trl, availability: av, evidence: ev } = pov.classification ?? {};
   const size = pov.market_size;
+  const growth = pov.growth_rate;
   // fabrics with the same priority and horizon share a line; a person's priority has its own, with their reason
   const lines = new Map<string, PovFabric[]>();
   for (const f of pov.fabrics ?? []) {
@@ -300,11 +337,15 @@ function Answers({ pov, admin }: { pov: Pov; admin: boolean }) {
       </Card>
       <Card title="Market size" value={size?.band ?? (size ? "No figure found" : "Not assessed yet")}>
         {size?.band ? (
-          <p>From a figure of ${size.amount_usd_bn}B{[size.scope, size.year].filter(Boolean).length > 0
-            ? ` (${[size.scope, size.year].filter(Boolean).join(", ")})` : ""} {renderRefs(size.refs, src)}</p>
+          <p>{size.quote ? <>&ldquo;{size.quote}&rdquo;</> : <>From a figure of ${size.amount_usd_bn}B</>}
+            {[size.scope, size.year].filter(Boolean).length > 0
+              ? ` (${[size.scope, size.year].filter(Boolean).join(", ")})` : ""} {renderRefs(size.refs, src)}</p>
         ) : size ? <p>No page the assessment read gives a market figure.</p>
           : <p>Shown from the technology&apos;s next assessment.</p>}
-        <p className="text-muted">A band, never a figure the radar makes up.</p>
+        {growth && (growth.cagr_pct != null
+          ? <p><b className="font-semibold">Growing:</b> &ldquo;{growth.quote}&rdquo; {renderRefs(growth.refs, src)}</p>
+          : <p>No page gives a growth rate.</p>)}
+        <p className="text-muted">A band, with the page&apos;s own words: never a figure the radar can&apos;t find on its page.</p>
       </Card>
       <Card title="Evidence" value={ev ? VERDICT_WORDS[ev.verdict] : "Not judged yet"}>
         {ev ? (
@@ -349,17 +390,19 @@ function ValueSummary({ pov }: { pov: Pov }) {
   if (fabrics.length === 0) return null;
   const steps = fabrics[0].path_steps;
   const cell = "px-3 py-2.5 align-top";
-  type Row = { title?: string; refs?: number[]; capital?: string | null; why?: string | null; note?: string; size?: Size | null };
+  type Row = { title?: string; industry?: string | null; refs?: number[]; capital?: string | null; why?: string | null; note?: string;
+    size?: Size | null };
   const rowsOf = (f: PovFabric) => {
     const rows: Row[] = [
-      ...f.use_cases.map((uc) => ({ title: uc.title, refs: uc.refs, capital: uc.capital, why: uc.capital_why, size: uc.size })),
+      ...f.use_cases.map((uc) => ({ title: uc.title, industry: uc.industry, refs: uc.refs, capital: uc.capital, why: uc.capital_why, size: uc.size })),
       ...f.suggested.map((t) => ({ title: t, note: "Suggested by the model, not from the pages; accepted by a person." })),
     ];
     return rows.length ? rows : [{ note: f.no_use_case ? `No use case in the pages yet. ${f.no_use_case.reason}`
       : "No use cases yet: the next assessment looks for them." }];
   };
   const caseCell = (r: Row, i: number, n: number) => <>
-    {r.title && <>{n > 1 ? `${i + 1}. ` : ""}{r.title} <FewRefs refs={r.refs} sources={src} /></>}
+    {r.title && <>{n > 1 ? `${i + 1}. ` : ""}{r.title} <FewRefs refs={r.refs} sources={src} />
+      {r.industry && <> <Industry name={r.industry} /></>}</>}
     {r.note && <span className={`block text-[12.5px] ${r.title ? "text-muted" : "text-neutral-600"}`}>{r.note}</span>}
   </>;
   const investment = (r: Row) => r.capital ? <><span className="capitalize">{r.capital}</span>
@@ -508,6 +551,7 @@ export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?
   const named = (keep: (m: MeasureMeta) => boolean) =>
     meta.filter(keep).sort((x, y) => x.code.localeCompare(y.code)).map((m) => m.name).join(" · ");
   const others = named((m) => !(m.axis in AXIS_LABELS));
+  const find = admin ? withFrom(`/admin/technologies/${pov.tech_id}`, here) : undefined; // Find evidence is on the technology's page
 
   useEffect(() => {
     let opened: HTMLDetailsElement[] = [];
@@ -553,7 +597,10 @@ export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?
           Why panel is open); one column otherwise and in print */}
       <div className="@container">
         <div className={fabrics.length > 0 ? "mt-8 grid grid-cols-1 items-start gap-x-10 gap-y-6 @5xl:grid-cols-2 print:block print:space-y-6" : "mt-8"}>
-          <div className="min-w-0"><Section title="Recommendation" text={s.recommendation} sources={src} /></div>
+          <div className="min-w-0 space-y-6">
+            <Section title="Recommendation" text={s.recommendation} sources={src} />
+            <Bullets title="Risks" items={s.risks} sources={src} findHref={find} />
+          </div>
           {fabrics.length > 0 && <div className="min-w-0"><Scores pov={pov} changeHref={admin ? tab : undefined} /></div>}
         </div>
       </div>
@@ -577,6 +624,11 @@ export function PovBody({ pov, admin = false, afterAnswers }: { pov: Pov; admin?
                 </p>
               )}
               <PovValue techId={pov.tech_id} fabricIds={pov.latest_assessment?.fabric_ids ?? []} admin={admin} frozen={pov.value} />
+            </Fold>
+          )}
+          {MARKET.some(([k]) => s[k] !== undefined) && (
+            <Fold title="The market around it" hint="why customers want it · alternatives · who's building it · what's new">
+              {MARKET.map(([k, title]) => <Bullets key={k} title={title} items={s[k]} sources={src} findHref={find} />)}
             </Fold>
           )}
           {(gaps > 0 || watch.length > 0) && (

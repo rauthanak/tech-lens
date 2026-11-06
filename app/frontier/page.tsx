@@ -10,7 +10,7 @@ import PlacementPanel from "@/components/frontier/PlacementPanel";
 import {
   type Frontier, frontierOf, type Item, type Lens, LENS_WORDS, pastEmerging, type Published, upOf,
 } from "@/components/frontier/items";
-import { ActNow, Assumptions, card, Committed, EvidenceThisEdition, MovedSince, NotPlaced, OnTheFrontier, pill } from "@/components/frontier/Sections";
+import { ActNow, Assumptions, card, Committed, EvidenceThisEdition, MovedSince, NotPlaced, OnTheFrontier, pill, TooEarlyList } from "@/components/frontier/Sections";
 import Table from "@/components/frontier/Table";
 import { fetchJson } from "@/lib/api";
 import { useMedia } from "@/lib/media";
@@ -123,6 +123,7 @@ function FrontierView() {
             {placed.length > 0
               ? `${plural(placed.length, "dot")} on the grid (${plural(techs, "technology", "technologies")}${fabric ? ` in ${fabricName}` : ""}; one dot per technology per fabric) · ${held.length.toLocaleString()} not placed yet`
               : `${held.length.toLocaleString()} not placed yet`}
+            {(data.too_early?.length ?? 0) > 0 && ` · ${data.too_early!.length.toLocaleString()} too early to place`}
             {stage === "" && past > 0 && ` · ${plural(past, "technology", "technologies")} at ${pastName} left out`}
           </p>
         )}
@@ -190,7 +191,8 @@ function FrontierView() {
               <div className={`grid grid-cols-1 items-start gap-4 ${pickedHere ? "xl:grid-cols-[minmax(0,1fr)_26rem]" : ""}`}>
                 <Grid key={`${shown}:${stage}:${lens}`} items={placed} cutpoints={data.cutpoints} withFabric={withFabric}
                   from={here} lens={lens} frontier={{ ...frontier, band }} since={since}
-                  picked={pickedHere ? picked : null} onPick={(i) => setPicked(i === picked ? null : i)} />
+                  picked={pickedHere ? picked : null} onPick={(i) => setPicked(i === picked ? null : i)}
+                  tooEarly={data.too_early?.length ?? 0} />
                 {pickedHere && (
                   <PlacementPanel key={`${picked.tech_id}:${picked.fabric_id}`} item={picked} gridFrom={data.grid_from} cutpoints={data.cutpoints} lens={lens}
                     admin={me?.role === "admin"} from={here} onClose={close} />
@@ -207,6 +209,7 @@ function FrontierView() {
           </div>
 
           <NotPlaced held={held} from={here} withFabric={withFabric} lens={lens} />
+          <TooEarlyList items={data.too_early ?? []} />
 
           <div className="mt-10 grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
             <Assumptions items={data.assumptions} />

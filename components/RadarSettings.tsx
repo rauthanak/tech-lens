@@ -9,7 +9,7 @@ import { usePipeline } from "@/lib/pipeline";
 type Radar = {
   wake_after_pages: number; default_time_zone: string; evidence_floor: number; classify_after_collection: boolean;
   classify_pages_cap: number; emerging_availability: string[];
-  find_evidence_results: number;
+  find_evidence_results: number; frontier_too_early: boolean;
 };
 
 const field = "mt-1 block w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-neutral-500";
@@ -17,7 +17,8 @@ const field = "mt-1 block w-full rounded border border-neutral-300 bg-white px-3
 /** The radar's own settings: judging each technology's evidence (the
  *  Classify step) and its limits, the pages a technology needs before it
  *  counts as ready, when a switched-off technology is flagged, Find
- *  evidence's limits, and the time zone used when a write didn't say one. */
+ *  evidence's limits, whether leaders see the catalog technologies too early
+ *  to place, and the time zone used when a write didn't say one. */
 export default function RadarSettings() {
   const p = usePipeline();
   const [form, setForm] = useState<Radar | null>(null);
@@ -39,8 +40,8 @@ export default function RadarSettings() {
   );
   return (
     <section className="mt-12 border-t border-neutral-200 pt-8">
-      <h2 className="text-lg font-semibold">Judging technologies, finding evidence, time zone</h2>
-      <p className="mt-1 text-sm text-neutral-600">How many pages judging reads for each technology, Find evidence&apos;s limits, and the time zone used by default.</p>
+      <h2 className="text-lg font-semibold">Judging technologies, finding evidence, the leaders&apos; view, time zone</h2>
+      <p className="mt-1 text-sm text-neutral-600">How many pages judging reads for each technology, Find evidence&apos;s limits, what leaders see of the catalog, and the time zone used by default.</p>
       <form className="mt-5 grid grid-cols-1 gap-x-10 gap-y-5 lg:grid-cols-2"
         onSubmit={async (e) => {
           e.preventDefault();
@@ -78,6 +79,15 @@ export default function RadarSettings() {
         {row("wake_after_pages", "Flag a switched-off technology after this many new pages", "It shows on the Briefing, under Before assessing, once this many new pages about it arrive.")}
         {row("find_evidence_results", "Find evidence: results per place", "How many results each place gives by default; the person can choose another number in the panel. There's no daily cap: the panel shows the cost before each search.")}
         <label className="block text-sm font-medium">
+          Show &quot;too early to place&quot; on the leaders&apos; view
+          <span className="mt-1 flex items-center gap-2 text-sm font-normal">
+            <input type="checkbox" checked={form.frontier_too_early ?? true}
+              onChange={(e) => setForm({ ...form, frontier_too_early: e.target.checked })} />
+            Lists the catalog technologies whose evidence is too thin or not credible to place yet, under the grid,
+            with one line in the Wait corner. Takes effect at the next Publish.
+          </span>
+        </label>
+        <label className="block text-sm font-medium">
           Default time zone
           <input className={field} value={form.default_time_zone} onChange={(e) => setForm({ ...form, default_time_zone: e.target.value })} />
           <span className="mt-1 block text-xs font-normal text-neutral-500">Counts the Find evidence day, and stands in for a write that didn&apos;t record its zone. Each time on screen shows in the zone of the person who did the thing.</span>
@@ -85,7 +95,7 @@ export default function RadarSettings() {
         <div className="lg:col-span-2">
           {error && <p className="text-sm text-failed">Not saved: {error}</p>}
           <SavedNote show={saved} />
-          <button type="submit" className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong">Save judging, evidence and time zone settings</button>
+          <button type="submit" className="rounded-full bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-strong">Save judging, evidence, leaders&apos; view and time zone settings</button>
           {dirty && <span className="ml-3 text-sm text-amber-800">Edits here aren&apos;t saved yet</span>}
         </div>
       </form>
